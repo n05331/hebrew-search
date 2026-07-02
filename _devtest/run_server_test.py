@@ -136,6 +136,20 @@ check("שמירת הגדרת OCR", st2.get("ocr_psm") == "6")
 rerun = call("POST", "/api/ocr/rerun")
 check("הרצת OCR מחדש", "queued" in rerun, str(rerun))
 
+# סטטוס Surya (לא דורש התקנה)
+ss = call("GET", "/api/ocr/surya/status")
+check("סטטוס Surya", "installed" in ss and "nvidia" in ss, str(ss))
+
+# אימון: בדיקת סביבה + רשימת גופנים עבריים
+tc = call("GET", "/api/training/check")
+check("בדיקת סביבת אימון", "ok" in tc, str(tc))
+tf = call("GET", "/api/training/fonts")["fonts"]
+check("גופנים עבריים לאימון", len(tf) >= 1, str(len(tf)))
+tm = call("GET", "/api/training/models")
+check("רשימת מודלים מאומנים", "models" in tm)
+ts = call("GET", "/api/training/status")
+check("סטטוס אימון", "running" in ts)
+
 print()
 print("FAILED:" if FAILS else "ALL PASSED", FAILS if FAILS else "")
 server.should_exit = True

@@ -38,7 +38,7 @@ for pkg in [
 
 datas += collect_data_files("docx")
 
-for pkg in ["uvicorn", "fastapi", "starlette", "pytesseract", "PIL"]:
+for pkg in ["uvicorn", "fastapi", "starlette", "pytesseract", "PIL", "fontTools", "bidi"]:
     hiddenimports += collect_submodules(pkg)
 
 hiddenimports += [
