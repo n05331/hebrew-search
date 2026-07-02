@@ -23,10 +23,10 @@ _devtest/ui_lib/
 _devtest/twocol.pdf
 
 # ---- Internal / private (not part of the open-source project) ----
-הערות לתוכנה.txt
-PLAN.md
-FrankRuehl Bold.ttf
-FrankRuehlCLM-Medium.ttf
+/הערות לתוכנה.txt
+/PLAN.md
+/FrankRuehl Bold.ttf
+/FrankRuehlCLM-Medium.ttf
 
 # ---- OS / editors ----
 Thumbs.db
