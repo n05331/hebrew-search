@@ -121,6 +121,21 @@ check("שמירת DOCX", sv2["ok"] and out_docx.exists())
 fonts = call("GET", "/api/fonts")["fonts"]
 check("רשימת גופנים", len(fonts) > 10, str(len(fonts)))
 
+# מנועי OCR
+engines = call("GET", "/api/ocr/engines")["engines"]
+check("רשימת מנועי OCR", any(e["id"] == "tesseract" for e in engines), str([e["id"] for e in engines]))
+tess = next(e for e in engines if e["id"] == "tesseract")
+check("סכימת הגדרות למנוע", len(tess["settings"]) >= 4, str(len(tess["settings"])))
+check("ברירות מחדל OCR בהגדרות", st.get("ocr_engine") == "tesseract" and st.get("ocr_psm") == "3", str((st.get("ocr_engine"), st.get("ocr_psm"))))
+
+# שמירת הגדרת OCR ואימות שהיא נקלטת
+call("PUT", "/api/settings", {"values": {"ocr_psm": "6"}})
+st2 = call("GET", "/api/settings")["settings"]
+check("שמירת הגדרת OCR", st2.get("ocr_psm") == "6")
+
+rerun = call("POST", "/api/ocr/rerun")
+check("הרצת OCR מחדש", "queued" in rerun, str(rerun))
+
 print()
 print("FAILED:" if FAILS else "ALL PASSED", FAILS if FAILS else "")
 server.should_exit = True

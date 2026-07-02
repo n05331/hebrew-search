@@ -53,9 +53,8 @@ class Settings:
         # שורש קבצי ה-frontend הבנוי (dist)
         self.frontend_dir: Path = resource_root() / "frontend" / "dist"
 
-        # הגדרות OCR
+        # הגדרות OCR (שאר הגדרות ה-OCR נשמרות ב-DB - ראו ocr_engines/ocr_settings)
         self.tesseract_cmd: str | None = os.environ.get("TESSERACT_CMD")
-        self.ocr_languages: str = os.environ.get("OCR_LANGS", "heb+eng")
         self.enable_ocr: bool = True
         # תיקיית מודלי השפה (מצורפת ל-EXE); ניתן לעקוף דרך TESSDATA_DIR
         _td = os.environ.get("TESSDATA_DIR")

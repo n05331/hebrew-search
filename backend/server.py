@@ -489,9 +489,26 @@ def create_app() -> FastAPI:
         log.info("OCR אזורי: %s -> %d תווים", p.name, len(text))
         return {"text": text}
 
+    # ---- מנועי OCR ----
+    @app.get("/api/ocr/engines")
+    def ocr_engines_list() -> dict:
+        from .extractors import ocr_engines
+
+        return {"engines": ocr_engines.describe_engines()}
+
+    @app.post("/api/ocr/rerun")
+    def ocr_rerun() -> dict:
+        """מחזיר לתור ה-OCR את כל הקבצים שעברו OCR - לאחר שינוי מנוע/הגדרות."""
+        n = catalog.mark_ocr_rerun()
+        indexer.ocr_status["pending"] = catalog.count_pending_ocr()
+        log.info("הרצת OCR מחדש: %d קבצים הוחזרו לתור", n)
+        return {"queued": n}
+
     # ---- הגדרות ----
     @app.get("/api/settings")
     def get_settings() -> dict:
+        from .extractors.ocr_engines import ocr_settings
+
         defaults = {
             "font_size": "30",          # גודל גופן לטקסט מוצג (דרישת לקוח)
             "result_font_size": "25",   # גודל גופן לתוצאות חיפוש (דרישת לקוח)
@@ -501,14 +518,19 @@ def create_app() -> FastAPI:
             "at_default": "text",       # text / pdf
             "proximity_words": "30",    # מרחק מרבי בין מילים בחיפוש לא-מדויק
         }
+        defaults.update(ocr_settings.DEFAULTS)
         stored = catalog.all_settings()
         defaults.update(stored)
         return {"settings": defaults}
 
     @app.put("/api/settings")
     def put_settings(req: SettingsRequest) -> dict:
+        from .extractors import ocr_engines
+
         for k, v in req.values.items():
             catalog.set_setting(k, str(v))
+        if any(k.startswith("ocr_") for k in req.values):
+            ocr_engines.invalidate()
         log.info("הגדרות עודכנו: %s", list(req.values.keys()))
         return {"ok": True}
 

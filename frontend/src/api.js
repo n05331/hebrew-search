@@ -79,6 +79,8 @@ export const api = {
     req("/extract/pdf-smart", { method: "POST", body: JSON.stringify({ path }) }),
   ocrRegion: (path, x, y, w, h) =>
     req("/ocr/region", { method: "POST", body: JSON.stringify({ path, x, y, w, h }) }),
+  ocrEngines: () => req("/ocr/engines"),
+  ocrRerun: () => req("/ocr/rerun", { method: "POST" }),
 
   // ---- הגדרות ----
   getSettings: () => req("/settings"),

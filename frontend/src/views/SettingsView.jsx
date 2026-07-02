@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, pickFolder } from "../api.js";
+import OcrSettings from "../components/OcrSettings.jsx";
 
 // חלונית "הגדרות": השינויים נשמרים רק בלחיצה על "שמור הגדרות".
 export default function SettingsView({ settings, onSettingsChanged, roots, onRootsChanged, progress, onToast }) {
@@ -169,6 +170,8 @@ export default function SettingsView({ settings, onSettingsChanged, roots, onRoo
           />
         </div>
       </section>
+
+      <OcrSettings local={local} edit={edit} onToast={onToast} />
 
       <section className="settings-section">
         <h3>תיקיות מקור הקבצים</h3>

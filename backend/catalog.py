@@ -217,6 +217,22 @@ class Catalog:
             )
             self.conn.commit()
 
+    def mark_ocr_rerun(self) -> int:
+        """מחזיר לתור ה-OCR את כל הקבצים שתוכנם הגיע מ-OCR (מלא או חלקי).
+
+        משמש את כפתור "הרצת OCR מחדש" לאחר שינוי מנוע/הגדרות. כולל גם קבצי
+        תמונה/PDF שנכשלו ב-OCR קודם - ייתכן שמנוע אחר יצליח.
+        """
+        img_exts = ",".join(f"'{e}'" for e in sorted(settings.image_extensions))
+        with self._lock:
+            cur = self.conn.execute(
+                "UPDATE files SET status='pending_ocr', error=NULL "
+                "WHERE (status='indexed' AND source IN ('ocr','mixed')) "
+                f"   OR (status='error' AND ext IN ({img_exts}, '.pdf'))"
+            )
+            self.conn.commit()
+            return cur.rowcount or 0
+
     def mark_pdfs_for_reextract(self) -> int:
         """מסמן קבצי PDF שחולצו משכבת טקסט (ללא OCR) לחילוץ-מחדש.
 
