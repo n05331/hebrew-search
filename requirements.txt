@@ -1,0 +1,17 @@
+﻿# Runtime dependencies for the Hebrew Search app
+# Install: python -m pip install -r requirements.txt
+
+fastapi==0.138.2
+uvicorn[standard]==0.49.0
+pydantic==2.13.4
+python-multipart==0.0.32
+pywebview==6.2.1
+tantivy==0.26.0
+python-docx==1.2.0
+pypdf==6.14.2
+pdfplumber==0.11.10
+pypdfium2==5.11.0
+Pillow==12.3.0
+pytesseract==0.3.13
+watchdog==6.0.0
+# Build only: pyinstaller==6.21.0

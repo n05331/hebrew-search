@@ -1,0 +1,13 @@
+* text=auto
+*.py text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+*.ttf binary
+*.traineddata binary
+*.ico binary
+*.png binary
+*.pdf binary
