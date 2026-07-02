@@ -280,6 +280,7 @@ class Indexer:
         self._ocr_stop.set()
 
     def _ocr_loop(self) -> None:
+        was_working = False
         while not self._ocr_stop.is_set():
             try:
                 pending = self.catalog.count_pending_ocr()
@@ -287,8 +288,18 @@ class Indexer:
                 if pending == 0:
                     self.ocr_status["running"] = False
                     self.ocr_status["current"] = ""
+                    if was_working:
+                        # התור התרוקן - משחררים משאבי מנועים (למשל worker של Surya)
+                        was_working = False
+                        try:
+                            from .extractors import ocr_engines
+
+                            ocr_engines.idle_engines()
+                        except Exception as exc:
+                            log.debug("שחרור מנועי OCR נכשל: %s", exc)
                     time.sleep(2.0)
                     continue
+                was_working = True
                 rows = self.catalog.list_pending_ocr(limit=1)
                 if not rows:
                     time.sleep(1.0)

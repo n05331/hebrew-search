@@ -1,0 +1,43 @@
+# מראה למשקולות מנוע Surya ב-GitHub Releases.
+#
+# למה: ה-CDN של HuggingFace חסום אצל חלק ממסנני האינטרנט (נטפרי) שהמשתמשים
+# שלנו מאחוריהם, בעוד GitHub Releases פתוח. ה-workflow מוריד את קובצי ה-GGUF
+# (כולל קובץ הרישיון OpenRAIL-M) ומעלה אותם ל-release קבוע בשם models-surya-2,
+# שממנו התוכנה מורידה בהתקנת המנוע.
+#
+# הפעלה: ידנית (workflow_dispatch) או אוטומטית בשינוי הקובץ הזה.
+
+name: mirror-models
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [".github/workflows/mirror-models.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: הורדת קובצי המודל מ-HuggingFace
+        run: |
+          BASE="https://huggingface.co/datalab-to/surya-ocr-2-gguf/resolve/main"
+          curl -fL --retry 3 -o surya-2.gguf "$BASE/surya-2.gguf"
+          curl -fL --retry 3 -o surya-2-mmproj.gguf "$BASE/surya-2-mmproj.gguf"
+          curl -fL --retry 3 -o LICENSE-surya.md "$BASE/LICENSE" || echo "OpenRAIL-M" > LICENSE-surya.md
+          ls -lh
+
+      - name: יצירת/עדכון ה-release והעלאת הקבצים
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view models-surya-2 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create models-surya-2 --repo "$GITHUB_REPOSITORY" \
+              --title "מודלי Surya 2 (מראה)" \
+              --notes "מראה לקובצי GGUF של datalab-to/surya-ocr-2 (רישיון OpenRAIL-M, ראו LICENSE-surya.md). מיועד להורדה על ידי התוכנה בהתקנת מנוע Surya." \
+              --latest=false
+          gh release upload models-surya-2 surya-2.gguf surya-2-mmproj.gguf LICENSE-surya.md \
+            --repo "$GITHUB_REPOSITORY" --clobber

@@ -69,3 +69,12 @@ def invalidate() -> None:
     ocr_settings.invalidate()
     for eng in _engines().values():
         eng.invalidate()
+
+
+def idle_engines() -> None:
+    """שחרור משאבים של כל המנועים (תור ריק / כיבוי שרת)."""
+    for eng in _engines().values():
+        try:
+            eng.idle()
+        except Exception as exc:
+            log.debug("idle למנוע %s נכשל: %s", eng.id, exc)

@@ -72,6 +72,14 @@ class RegionOcrRequest(BaseModel):
     h: float
 
 
+class TrainingRequest(BaseModel):
+    font_paths: List[str]
+    name: str
+    noise: str = "medium"       # low / medium / high
+    lines: int = 400
+    iterations: int = 400
+
+
 class SearchRequest(BaseModel):
     q: str
     limit: int = 30
@@ -182,8 +190,11 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     def _shutdown() -> None:
+        from .extractors import ocr_engines
+
         watcher.stop()
         indexer.stop_ocr_worker()
+        ocr_engines.idle_engines()
 
     # ---- בריאות וסטטיסטיקה ----
     @app.get("/api/health")
@@ -503,6 +514,98 @@ def create_app() -> FastAPI:
         indexer.ocr_status["pending"] = catalog.count_pending_ocr()
         log.info("הרצת OCR מחדש: %d קבצים הוחזרו לתור", n)
         return {"queued": n}
+
+    # ---- התקנת מנוע Surya ----
+    @app.get("/api/ocr/surya/status")
+    def surya_status() -> dict:
+        from .extractors.ocr_engines import surya_install
+
+        return surya_install.get_status()
+
+    @app.post("/api/ocr/surya/install")
+    def surya_install_start() -> dict:
+        from .extractors.ocr_engines import surya_install
+
+        started = surya_install.start_install()
+        if not started:
+            raise HTTPException(409, "התקנה כבר רצה")
+        return {"started": True}
+
+    @app.delete("/api/ocr/surya")
+    def surya_uninstall() -> dict:
+        from .extractors import ocr_engines
+        from .extractors.ocr_engines import surya_install
+
+        surya_install.uninstall()
+        ocr_engines.invalidate()
+        # אם Surya היה המנוע הנבחר - חוזרים ל-Tesseract
+        if catalog.get_setting("ocr_engine") == "surya":
+            catalog.set_setting("ocr_engine", "tesseract")
+        if catalog.get_setting("ocr_region_engine") == "surya":
+            catalog.set_setting("ocr_region_engine", "tesseract")
+        log.info("מנוע Surya הוסר")
+        return {"ok": True}
+
+    # ---- אימון מודל לפי גופן ----
+    @app.get("/api/training/check")
+    def training_check() -> dict:
+        from .training import font_trainer
+
+        return font_trainer.check_environment()
+
+    @app.get("/api/training/fonts")
+    def training_fonts() -> dict:
+        from .training import font_trainer
+
+        return {"fonts": font_trainer.list_hebrew_fonts()}
+
+    @app.post("/api/training/start")
+    def training_start(req: TrainingRequest) -> dict:
+        from .training import font_trainer
+
+        res = font_trainer.start_training(
+            font_paths=req.font_paths,
+            model_name=req.name,
+            noise_level=req.noise,
+            num_lines=req.lines,
+            iterations=req.iterations,
+        )
+        if "error" in res:
+            raise HTTPException(409, res["error"])
+        return res
+
+    @app.get("/api/training/status")
+    def training_status() -> dict:
+        from .training import font_trainer
+
+        return font_trainer.get_status()
+
+    @app.post("/api/training/cancel")
+    def training_cancel() -> dict:
+        from .training import font_trainer
+
+        font_trainer.cancel()
+        return {"ok": True}
+
+    @app.get("/api/training/models")
+    def training_models() -> dict:
+        from .training import font_trainer
+
+        return {"models": font_trainer.list_models()}
+
+    @app.delete("/api/training/models/{name}")
+    def training_delete_model(name: str) -> dict:
+        from .extractors import ocr_engines
+        from .training import font_trainer
+
+        ok = font_trainer.delete_model(name)
+        if not ok:
+            raise HTTPException(404, "המודל לא נמצא")
+        # אם המודל שנמחק היה בשימוש - חוזרים למודל המובנה
+        if catalog.get_setting("ocr_traineddata") == name:
+            catalog.set_setting("ocr_traineddata", "")
+        ocr_engines.invalidate()
+        return {"ok": True}
 
     # ---- הגדרות ----
     @app.get("/api/settings")

@@ -81,6 +81,18 @@ export const api = {
     req("/ocr/region", { method: "POST", body: JSON.stringify({ path, x, y, w, h }) }),
   ocrEngines: () => req("/ocr/engines"),
   ocrRerun: () => req("/ocr/rerun", { method: "POST" }),
+  suryaStatus: () => req("/ocr/surya/status"),
+  suryaInstall: () => req("/ocr/surya/install", { method: "POST" }),
+  suryaUninstall: () => req("/ocr/surya", { method: "DELETE" }),
+
+  // ---- אימון מודל לפי גופן ----
+  trainingCheck: () => req("/training/check"),
+  trainingFonts: () => req("/training/fonts"),
+  trainingStart: (body) => req("/training/start", { method: "POST", body: JSON.stringify(body) }),
+  trainingStatus: () => req("/training/status"),
+  trainingCancel: () => req("/training/cancel", { method: "POST" }),
+  trainingModels: () => req("/training/models"),
+  trainingDeleteModel: (name) => req("/training/models/" + encodeURIComponent(name), { method: "DELETE" }),
 
   // ---- הגדרות ----
   getSettings: () => req("/settings"),

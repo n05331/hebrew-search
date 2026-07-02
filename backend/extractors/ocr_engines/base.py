@@ -31,6 +31,9 @@ class OcrEngine:
     def invalidate(self) -> None:
         """איפוס מטמונים פנימיים לאחר שינוי הגדרות."""
 
+    def idle(self) -> None:
+        """שחרור משאבים כשאין עבודה (למשל כיבוי תת-תהליך). ברירת מחדל: כלום."""
+
     def settings_schema(self) -> List[dict]:
         """סכימת ההגדרות של המנוע ל-UI הדינמי.
 

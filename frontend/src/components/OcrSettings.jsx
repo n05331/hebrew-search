@@ -1,15 +1,69 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import FontTraining from "./FontTraining.jsx";
 
 // סעיף הגדרות "זיהוי טקסט (OCR)": בחירת מנוע ופאנל הגדרות דינמי לפי
 // הסכימה שהשרת מחזיר - מנוע חדש ב-backend מופיע כאן ללא שינוי קוד.
 export default function OcrSettings({ local, edit, onToast }) {
   const [engines, setEngines] = useState([]);
   const [rerunBusy, setRerunBusy] = useState(false);
+  const [surya, setSurya] = useState(null);
+  const pollRef = useRef(null);
+
+  function refreshEngines() {
+    api.ocrEngines().then((r) => setEngines(r.engines)).catch(() => {});
+  }
 
   useEffect(() => {
-    api.ocrEngines().then((r) => setEngines(r.engines)).catch(() => {});
+    refreshEngines();
+    api.suryaStatus().then(setSurya).catch(() => {});
+    return () => pollRef.current && clearInterval(pollRef.current);
   }, []);
+
+  function pollSurya() {
+    if (pollRef.current) clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const s = await api.suryaStatus();
+        setSurya(s);
+        if (!s.running) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          refreshEngines();
+          if (s.error) onToast("התקנת Surya נכשלה: " + s.error, "error");
+          else if (s.installed) onToast("מנוע Surya הותקן בהצלחה", "ok");
+        }
+      } catch (e) {}
+    }, 1500);
+  }
+
+  async function installSurya() {
+    if (!window.confirm(
+      "התקנת מנוע Surya מורידה כ-3GB (סביבת Python, PyTorch והמודל).\n" +
+      "בהרצה הראשונה יורדו מודלים נוספים. להמשיך?"
+    )) return;
+    try {
+      await api.suryaInstall();
+      setSurya((s) => ({ ...(s || {}), running: true, step: "מתחיל", percent: 0, error: "" }));
+      pollSurya();
+    } catch (e) {
+      onToast(e.message, "error");
+    }
+  }
+
+  async function uninstallSurya() {
+    if (!window.confirm("להסיר את מנוע Surya מהמחשב? (ניתן להתקין שוב בכל עת)")) return;
+    try {
+      await api.suryaUninstall();
+      const s = await api.suryaStatus();
+      setSurya(s);
+      refreshEngines();
+      if (local.ocr_engine === "surya") edit({ ocr_engine: "tesseract" });
+      onToast("מנוע Surya הוסר", "ok");
+    } catch (e) {
+      onToast(e.message, "error");
+    }
+  }
 
   const engineId = local.ocr_engine || "tesseract";
   const engine = engines.find((e) => e.id === engineId) || engines[0];
@@ -97,6 +151,45 @@ export default function OcrSettings({ local, edit, onToast }) {
       )}
 
       {engine && engine.available && (engine.settings || []).map(renderField)}
+
+      {surya && (
+        <div className="setting-row">
+          <label>מנוע Surya (דיוק גבוה בעברית)</label>
+          <div className="setting-inline" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
+            {surya.installed && !surya.running && (
+              <>
+                <span>מותקן ✓ {surya.nvidia ? "(כרטיס NVIDIA זוהה)" : "(ללא NVIDIA - הזיהוי איטי: עשרות שניות לעמוד)"}</span>
+                <button className="btn" onClick={uninstallSurya}>הסר את המנוע</button>
+              </>
+            )}
+            {!surya.installed && !surya.running && (
+              <>
+                <span className="muted">
+                  מנוע זיהוי מדויק במיוחד לעברית, מזהה עמודות ופריסת עמוד (מתאים לעלונים).
+                  דורש הורדה של כ-3GB{surya.nvidia ? "" : "; ללא כרטיס NVIDIA הזיהוי איטי מאוד"}.
+                </span>
+                <button className="btn btn-primary" onClick={installSurya}>התקן את מנוע Surya</button>
+                {surya.error && <span className="muted" style={{ color: "var(--danger, #c00)" }}>שגיאה קודמת: {surya.error}</span>}
+              </>
+            )}
+            {surya.running && (
+              <>
+                <span>{surya.step}{surya.detail ? ` — ${surya.detail}` : ""}</span>
+                <progress value={surya.percent || 0} max="100" style={{ width: "100%" }} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <details style={{ marginTop: 10 }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600 }}>
+          אימון מודל זיהוי מותאם לפי גופן
+        </summary>
+        <div style={{ marginTop: 8 }}>
+          <FontTraining onToast={onToast} onModelsChanged={refreshEngines} />
+        </div>
+      </details>
 
       <div className="index-actions">
         <button className="btn" onClick={rerunOcr} disabled={rerunBusy}>
