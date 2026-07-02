@@ -1,0 +1,40 @@
+---
+description: נוהל עבודה, גרסאות ופרסום לפרויקט חיפוש עברי
+alwaysApply: true
+---
+
+# נוהל עבודה — חיפוש עברי (hebrew-search)
+
+## מאגר ואימות
+- המאגר: https://github.com/n05331/hebrew-search (branch ראשי: `main`).
+- האימות ל-push כבר מוגדר: fine-grained token מוטמע ב-remote‏ `origin`
+  (בקובץ `.git/config` המקומי). אין צורך לבקש מהמשתמש מפתח — `git push` עובד ישירות.
+- אם push נכשל ב-401/403 — ה-token פג תוקף; בקש מהמשתמש token חדש
+  (Fine-grained, מוגבל למאגר זה, הרשאות Contents + Workflows) ועדכן עם
+  `git remote set-url origin https://<TOKEN>@github.com/n05331/hebrew-search.git`.
+
+## תהליך שינוי סטנדרטי
+1. מבצעים את השינוי בקוד ומוודאים שהבדיקות עוברות:
+   `python _devtest/run_smoke.py` ו-`python _devtest/run_server_test.py`
+   (עם המפרש `.venv\Scripts\python.exe`).
+2. שינוי ב-frontend מחייב `npm run build` בתיקיית `frontend`.
+3. מעדכנים את `CHANGELOG.md` תחת הגרסה הבאה (סעיפים: נוסף / שונה / תוקן).
+4. commit בעברית, קצר וממוקד (מה + למה), ואז `git push`.
+
+## שחרור גרסה (SemVer)
+1. מעדכנים מספר גרסה בשני מקומות: `backend/server.py` (FastAPI version)
+   ו-`frontend/package.json`.
+2. סוגרים את הסעיף ב-`CHANGELOG.md` עם תאריך.
+3. `git tag -a vX.Y.Z -m "גרסה X.Y.Z"` ואז `git push origin vX.Y.Z`.
+4. ה-CI ‏(GitHub Actions) בונה את `HebrewSearch.exe` ומפרסם Release אוטומטית —
+   אין לבנות EXE ידנית לשחרור.
+
+## קבצים שאסור לכלול במאגר
+`הערות לתוכנה.txt`, `PLAN.md`, קובצי לוג, `_devchk/`, `_devmulti/`, תוצרי
+build/dist — כולם ב-gitignore. אין להסיר אותם מה-gitignore.
+
+## מוסכמות קוד
+- Python: תיעוד בעברית, ללא תלות חדשה בלי צורך אמיתי.
+- React: קומפוננטות פונקציונליות, UI בעברית, RTL תמיד.
+- גופן ברירת מחדל: Frank Ruehl CLM (רישיון GPL, מפרויקט Culmus) — אין להחליף
+  בגופנים מסחריים (כמו FrankRuehl של Kivun) שאסורים להפצה בקוד פתוח.
