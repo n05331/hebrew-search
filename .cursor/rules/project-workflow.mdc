@@ -15,11 +15,16 @@ alwaysApply: true
 
 ## תהליך שינוי סטנדרטי
 1. מבצעים את השינוי בקוד ומוודאים שהבדיקות עוברות:
-   `python _devtest/run_smoke.py` ו-`python _devtest/run_server_test.py`
-   (עם המפרש `.venv\Scripts\python.exe`).
+ `python _devtest/run_smoke.py` ו-`python _devtest/run_server_test.py`
+ (עם המפרש `.venv\Scripts\python.exe`).
 2. שינוי ב-frontend מחייב `npm run build` בתיקיית `frontend`.
 3. מעדכנים את `CHANGELOG.md` תחת הגרסה הבאה (סעיפים: נוסף / שונה / תוקן).
-4. commit בעברית, קצר וממוקד (מה + למה), ואז `git push`.
+4. **תיעוד חייב להישאר מסונכרן**: אם השינוי מוסיף/משנה יכולת, התקנה,
+ ארכיטקטורה או תלות — מעדכנים באותו commit גם את `README.md` (סעיפי
+ "יכולות עיקריות", "OCR", "ארכיטקטורה" וכו') ואת שאר קבצי התיאור
+ הרלוונטיים (`CONTRIBUTING.md`, הערות ב-workflows). שינוי פנימי טהור
+ (רפקטור/תיקון באג בלי שינוי התנהגות) אינו מחייב עדכון README.
+5. commit בעברית, קצר וממוקד (מה + למה), ואז `git push`.
 
 ## שחרור גרסה (SemVer)
 1. מעדכנים מספר גרסה בשני מקומות: `backend/server.py` (FastAPI version)
