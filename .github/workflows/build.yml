@@ -69,6 +69,14 @@ jobs:
       - name: התקנת Tesseract (נארז לתוך ה-EXE)
         run: choco install tesseract -y --no-progress
 
+      - name: אימות כלי אימון (נדרשים לאשף אימון הגופנים)
+        shell: pwsh
+        run: |
+          $dir = "C:\Program Files\Tesseract-OCR"
+          foreach ($t in @("tesseract.exe", "lstmtraining.exe", "combine_tessdata.exe")) {
+            if (-not (Test-Path "$dir\$t")) { throw "חסר $t בהתקנת Tesseract" }
+          }
+
       - name: בניית frontend
         working-directory: frontend
         run: |

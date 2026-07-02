@@ -132,7 +132,7 @@ class SaveTextFileRequest(BaseModel):
 
 def create_app() -> FastAPI:
     setup_logging()
-    app = FastAPI(title="חיפוש עברי", version="0.2.0")
+    app = FastAPI(title="חיפוש עברי", version="0.3.0")
 
     app.add_middleware(
         CORSMiddleware,

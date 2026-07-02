@@ -158,7 +158,7 @@ export default function OcrSettings({ local, edit, onToast }) {
           <div className="setting-inline" style={{ flexDirection: "column", alignItems: "flex-start", gap: 6 }}>
             {surya.installed && !surya.running && (
               <>
-                <span>מותקן ✓ {surya.nvidia ? "(כרטיס NVIDIA זוהה)" : "(ללא NVIDIA - הזיהוי איטי: עשרות שניות לעמוד)"}</span>
+                <span>מותקן ✓ {surya.nvidia ? "(כרטיס NVIDIA זוהה)" : "(ללא NVIDIA - הזיהוי איטי: מספר דקות לעמוד)"}</span>
                 <button className="btn" onClick={uninstallSurya}>הסר את המנוע</button>
               </>
             )}
@@ -166,7 +166,7 @@ export default function OcrSettings({ local, edit, onToast }) {
               <>
                 <span className="muted">
                   מנוע זיהוי מדויק במיוחד לעברית, מזהה עמודות ופריסת עמוד (מתאים לעלונים).
-                  דורש הורדה של כ-3GB{surya.nvidia ? "" : "; ללא כרטיס NVIDIA הזיהוי איטי מאוד"}.
+                  דורש הורדה של כ-3GB{surya.nvidia ? "" : "; ללא כרטיס NVIDIA הזיהוי איטי מאוד (מספר דקות לעמוד)"}.
                 </span>
                 <button className="btn btn-primary" onClick={installSurya}>התקן את מנוע Surya</button>
                 {surya.error && <span className="muted" style={{ color: "var(--danger, #c00)" }}>שגיאה קודמת: {surya.error}</span>}

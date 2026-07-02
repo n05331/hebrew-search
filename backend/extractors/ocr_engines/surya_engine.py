@@ -34,8 +34,8 @@ _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
 # זמן המתנה לעליית ה-worker: בהרצה ראשונה מורדים המודלים (ג'יגה-בייטים)
 _READY_TIMEOUT = 3600
-# זמן מרבי לעמוד בודד (CPU איטי - עשרות שניות עד דקות לעמוד)
-_PAGE_TIMEOUT = 900
+# זמן מרבי לעמוד בודד (על CPU חלש עיבוד עמוד יכול לקחת דקות ארוכות)
+_PAGE_TIMEOUT = 2400
 
 # קוד ה-worker שרץ בסביבת ה-Python המבודדת (נכתב לדיסק בעת ההפעלה, כדי
 # שיעבוד גם מתוך EXE ארוז שבו אין קובצי מקור)
@@ -167,6 +167,15 @@ class SuryaEngine(OcrEngine):
             env["SURYA_GGUF_LOCAL_MMPROJ_PATH"] = ggufs["mmproj"]
         env["SURYA_INFERENCE_BACKEND"] = "llamacpp"
         env["SURYA_INFERENCE_PARALLEL"] = "4"
+        env.setdefault("SURYA_INFERENCE_TIMEOUT_SECONDS", str(_PAGE_TIMEOUT - 100))
+        # llama.cpp קורא משתני LLAMA_ARG_*: בלי זה llama-server משתמש רק
+        # בחלק קטן מהליבות והעיבוד על CPU איטי פי כמה
+        try:
+            n_threads = max(2, (os.cpu_count() or 4) - 1)
+        except Exception:
+            n_threads = 4
+        env.setdefault("LLAMA_ARG_THREADS", str(n_threads))
+        env.setdefault("LLAMA_ARG_THREADS_HTTP", "4")
         env["PYTHONIOENCODING"] = "utf-8"
         env["PYTHONUTF8"] = "1"
 
