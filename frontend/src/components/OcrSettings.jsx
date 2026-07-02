@@ -167,6 +167,7 @@ export default function OcrSettings({ local, edit, onToast }) {
                 <span className="muted">
                   מנוע זיהוי מדויק במיוחד לעברית, מזהה עמודות ופריסת עמוד (מתאים לעלונים).
                   דורש הורדה של כ-3GB{surya.nvidia ? "" : "; ללא כרטיס NVIDIA הזיהוי איטי מאוד (מספר דקות לעמוד)"}.
+                  למחשב ללא אינטרנט: השתמשו ב"ייצוא וייבוא" בהמשך העמוד.
                 </span>
                 <button className="btn btn-primary" onClick={installSurya}>התקן את מנוע Surya</button>
                 {surya.error && <span className="muted" style={{ color: "var(--danger, #c00)" }}>שגיאה קודמת: {surya.error}</span>}

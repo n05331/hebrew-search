@@ -85,6 +85,16 @@ export const api = {
   suryaInstall: () => req("/ocr/surya/install", { method: "POST" }),
   suryaUninstall: () => req("/ocr/surya", { method: "DELETE" }),
 
+  // ---- ייצוא/ייבוא נתונים (העברה בין מחשבים / אופליין) ----
+  transferComponents: () => req("/transfer/components"),
+  transferExport: (path, components) =>
+    req("/transfer/export", { method: "POST", body: JSON.stringify({ path, components }) }),
+  transferInspect: (path) =>
+    req("/transfer/inspect", { method: "POST", body: JSON.stringify({ path, components: [] }) }),
+  transferImport: (path, components) =>
+    req("/transfer/import", { method: "POST", body: JSON.stringify({ path, components }) }),
+  transferStatus: () => req("/transfer/status"),
+
   // ---- אימון מודל לפי גופן ----
   trainingCheck: () => req("/training/check"),
   trainingFonts: () => req("/training/fonts"),
@@ -138,6 +148,15 @@ export function stripTeamim(text) {
 export async function pickFolder() {
   if (window.pywebview && window.pywebview.api && window.pywebview.api.pick_folder) {
     const result = await window.pywebview.api.pick_folder();
+    return result || null;
+  }
+  return null;
+}
+
+// דיאלוג פתיחת קובץ נייטיב דרך pywebview. מחזיר נתיב או null.
+export async function pickOpenFile(fileType) {
+  if (window.pywebview && window.pywebview.api && window.pywebview.api.open_file_dialog) {
+    const result = await window.pywebview.api.open_file_dialog(fileType || "zip");
     return result || null;
   }
   return null;

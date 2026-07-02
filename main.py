@@ -49,6 +49,26 @@ class Bridge:
             log.warning("בחירת תיקייה נכשלה: %s", exc)
         return None
 
+    def open_file_dialog(self, file_type="zip"):
+        """דיאלוג פתיחת קובץ נייטיב. מחזיר את הנתיב שנבחר או None."""
+        try:
+            windows = webview.windows
+            if not windows:
+                return None
+            open_type = getattr(getattr(webview, "FileDialog", None), "OPEN", None)
+            if open_type is None:
+                open_type = getattr(webview, "OPEN_DIALOG", 1)
+            if file_type == "zip":
+                types = ("חבילת התקנה (*.zip)",)
+            else:
+                types = ("כל הקבצים (*.*)",)
+            result = windows[0].create_file_dialog(open_type, file_types=types)
+            if result:
+                return result[0] if isinstance(result, (list, tuple)) else result
+        except Exception as exc:
+            log.warning("דיאלוג פתיחת קובץ נכשל: %s", exc)
+        return None
+
     def save_file_dialog(self, default_name="", file_type="txt"):
         """דיאלוג 'שמירה בשם' נייטיב. מחזיר את הנתיב שנבחר או None."""
         try:

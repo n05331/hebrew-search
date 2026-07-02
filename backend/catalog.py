@@ -217,6 +217,63 @@ class Catalog:
             )
             self.conn.commit()
 
+    def find_indexed_by_sha1(self, sha1: str, exclude_id: int = 0) -> Optional[sqlite3.Row]:
+        """מוצא קובץ אחר עם אותו תוכן (sha1) - לשימוש חוזר ב-OCR.
+
+        מוגבל לקבצים שתוכנם הגיע מ-OCR (מלא או חלקי): שם החיסכון האמיתי.
+        כולל רשומות 'cache' - טקסטים שיובאו ממחשב אחר עבור קבצים שטרם נסרקו.
+        """
+        return self.conn.execute(
+            "SELECT * FROM files WHERE sha1=? AND id!=? AND status IN ('indexed','cache') "
+            "AND source IN ('ocr','mixed') AND full_text IS NOT NULL LIMIT 1",
+            (sha1, exclude_id),
+        ).fetchone()
+
+    def import_content_row(
+        self, path: str, name: str, ext: str, size: int, mtime: float, sha1: str,
+        full_text: str, segments: List[Segment], source: str, page_count: int,
+        status: str = "indexed",
+    ) -> int:
+        """מוסיף רשומה מיובאת (מגיבוי) עם תוכן מלא. לא דורס רשומה מאונדקסת קיימת."""
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, status FROM files WHERE path=?", (path,)
+            ).fetchone()
+            if row is not None and row["status"] == "indexed":
+                return row["id"]
+            if row is None:
+                cur = self.conn.execute(
+                    "INSERT INTO files (path, name, ext, size, mtime, sha1, status) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (path, name, ext, size, mtime, sha1, status),
+                )
+                file_id = cur.lastrowid
+            else:
+                file_id = row["id"]
+            self.conn.execute("DELETE FROM segments WHERE file_id=?", (file_id,))
+            self.conn.executemany(
+                "INSERT INTO segments (file_id, seq, page, char_start, char_end) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(file_id, i, s.page, s.char_start, s.char_end) for i, s in enumerate(segments)],
+            )
+            self.conn.execute(
+                "UPDATE files SET status=?, error=NULL, source=?, page_count=?, "
+                "char_count=?, full_text=?, indexed_at=?, sha1=?, size=?, mtime=? WHERE id=?",
+                (status, source, page_count, len(full_text), full_text,
+                 time.time(), sha1, size, mtime, file_id),
+            )
+            self.conn.commit()
+            return file_id
+
+    def backup_to(self, target: Path) -> None:
+        """עותק עקבי של הקטלוג (SQLite backup API) - בטוח גם תוך כדי עבודה."""
+        with self._lock:
+            dest = sqlite3.connect(str(target))
+            try:
+                self.conn.backup(dest)
+            finally:
+                dest.close()
+
     def mark_ocr_rerun(self) -> int:
         """מחזיר לתור ה-OCR את כל הקבצים שתוכנם הגיע מ-OCR (מלא או חלקי).
 

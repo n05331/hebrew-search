@@ -236,10 +236,22 @@ class Indexer:
         if not self.catalog.needs_reindex(str(path), sha1):
             return "skipped"
 
+        # שימוש חוזר ב-OCR לפי תוכן: קובץ זהה (sha1) שכבר עבר OCR - הועבר,
+        # שוכפל, או יובא ממחשב אחר (רשומת cache) - הטקסט מועתק במקום OCR יקר.
+        # האיתור לפני ה-upsert, כדי שרשומת cache של אותו נתיב לא תימחק קודם.
+        twin = None
+        try:
+            twin = self.catalog.find_indexed_by_sha1(sha1)
+        except Exception:
+            pass
+
         file_id = self.catalog.upsert_file_meta(
             path=str(path), name=path.name, ext=path.suffix.lower(),
             size=size, mtime=stat.st_mtime, sha1=sha1,
         )
+
+        if twin is not None and self._copy_from_twin(file_id, path, stat.st_mtime, twin):
+            return "indexed"
 
         result = extract_file(path, allow_ocr=allow_ocr)
         full_text, segments = _build_full_text(result.pages)
@@ -266,6 +278,29 @@ class Indexer:
             return "pending_ocr"
         self.catalog.mark_error(file_id, "לא נמצא טקסט בקובץ")
         return "error"
+
+    def _copy_from_twin(self, file_id: int, path: Path, mtime: float, twin) -> bool:
+        """מעתיק תוכן מרשומה זהת-תוכן (שאותרה מראש). מחזיר האם הועתק."""
+        try:
+            # המקטעים נשלפו לפני save_content: כשה"תאום" הוא רשומת cache של
+            # אותו נתיב (file_id זהה), save_content מוחק את מקטעיו הישנים
+            segments = [
+                Segment(page=s["page"], char_start=s["char_start"], char_end=s["char_end"])
+                for s in self.catalog.get_segments(twin["id"])
+            ]
+            self.catalog.save_content(
+                file_id=file_id, full_text=twin["full_text"], segments=segments,
+                source=twin["source"], page_count=twin["page_count"] or 0,
+            )
+            self.engine.add_document(
+                file_id=file_id, path=str(path), name=path.name,
+                ext=path.suffix.lower(), mtime=int(mtime), content=twin["full_text"],
+            )
+            log.info("שימוש חוזר בטקסט OCR (תוכן זהה): %s <- %s", path, twin["path"])
+            return True
+        except Exception as exc:
+            log.debug("העתקה מקובץ תאום נכשלה עבור %s: %s", path, exc)
+            return False
 
     # ---- שלב ב׳: worker רקעי ל-OCR ----
     def start_ocr_worker(self) -> None:
@@ -320,6 +355,15 @@ class Indexer:
 
         if not path.exists():
             self.catalog.mark_error(file_id, "הקובץ לא נמצא בעת OCR")
+            return
+
+        # אם בינתיים הושלם OCR לקובץ זהה-תוכן - משתמשים בו במקום להריץ שוב
+        try:
+            twin = self.catalog.find_indexed_by_sha1(row["sha1"] or "", exclude_id=file_id)
+        except Exception:
+            twin = None
+        if twin is not None and self._copy_from_twin(file_id, path, row["mtime"] or 0, twin):
+            self.engine.commit()
             return
 
         def cb(done: int, total: int) -> None:

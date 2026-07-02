@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api, pickFolder } from "../api.js";
 import OcrSettings from "../components/OcrSettings.jsx";
+import TransferSettings from "../components/TransferSettings.jsx";
 
 // חלונית "הגדרות": השינויים נשמרים רק בלחיצה על "שמור הגדרות".
 export default function SettingsView({ settings, onSettingsChanged, roots, onRootsChanged, progress, onToast }) {
@@ -214,6 +215,8 @@ export default function SettingsView({ settings, onSettingsChanged, roots, onRoo
           </div>
         )}
       </section>
+
+      <TransferSettings onToast={onToast} />
     </div>
   );
 }

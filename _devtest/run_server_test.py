@@ -140,6 +140,38 @@ check("הרצת OCR מחדש", "queued" in rerun, str(rerun))
 ss = call("GET", "/api/ocr/surya/status")
 check("סטטוס Surya", "installed" in ss and "nvidia" in ss, str(ss))
 
+# ייצוא/ייבוא נתונים
+tc2 = call("GET", "/api/transfer/components")["components"]
+check("רכיבי ייצוא", all(k in tc2 for k in ("settings", "index", "models", "surya")), str(list(tc2)))
+try:
+    call("POST", "/api/transfer/import", {"path": "C:/nonexistent/bundle.zip", "components": ["index"]})
+    check("ייבוא דוחה קובץ חסר", False)
+except Exception as e:
+    check("ייבוא דוחה קובץ חסר", "400" in str(e) or "Bad Request" in str(e), str(e))
+
+# ייצוא אמיתי של הגדרות+אינדקס וייבוא חוזר (אותו שרת - רשומות קיימות נשמרות)
+exp_dir = DATA / "transfer_out"
+exp_dir.mkdir()
+call("POST", "/api/transfer/export", {"path": str(exp_dir), "components": ["settings", "index"]})
+for _ in range(100):
+    ts = call("GET", "/api/transfer/status")
+    if not ts["running"]:
+        break
+    time.sleep(0.2)
+bundle_path = exp_dir / "HebrewSearch-Transfer.zip"
+check("ייצוא הפיק קובץ", ts["error"] == "" and bundle_path.exists(), str(ts))
+
+insp = call("POST", "/api/transfer/inspect", {"path": str(bundle_path)})
+check("בדיקת manifest", "settings" in insp["manifest"]["components"], str(insp["manifest"]["components"]))
+
+call("POST", "/api/transfer/import", {"path": str(bundle_path), "components": ["settings", "index"]})
+for _ in range(100):
+    ts = call("GET", "/api/transfer/status")
+    if not ts["running"]:
+        break
+    time.sleep(0.2)
+check("ייבוא הושלם", ts["error"] == "" and ts["percent"] == 100, str(ts))
+
 # אימון: בדיקת סביבה + רשימת גופנים עבריים
 tc = call("GET", "/api/training/check")
 check("בדיקת סביבת אימון", "ok" in tc, str(tc))

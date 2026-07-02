@@ -72,6 +72,11 @@ class RegionOcrRequest(BaseModel):
     h: float
 
 
+class TransferRequest(BaseModel):
+    path: str
+    components: List[str] = []
+
+
 class TrainingRequest(BaseModel):
     font_paths: List[str]
     name: str
@@ -132,7 +137,7 @@ class SaveTextFileRequest(BaseModel):
 
 def create_app() -> FastAPI:
     setup_logging()
-    app = FastAPI(title="חיפוש עברי", version="0.3.0")
+    app = FastAPI(title="חיפוש עברי", version="0.3.1")
 
     app.add_middleware(
         CORSMiddleware,
@@ -530,6 +535,46 @@ def create_app() -> FastAPI:
         if not started:
             raise HTTPException(409, "התקנה כבר רצה")
         return {"started": True}
+
+    # ---- ייצוא/ייבוא נתוני התוכנה (העברה בין מחשבים / אופליין) ----
+    @app.get("/api/transfer/components")
+    def transfer_components() -> dict:
+        from . import transfer
+
+        return {"components": transfer.available_components()}
+
+    @app.post("/api/transfer/export")
+    def transfer_export(req: TransferRequest) -> dict:
+        from . import transfer
+
+        res = transfer.start_export(req.path, req.components)
+        if "error" in res:
+            raise HTTPException(400, res["error"])
+        return res
+
+    @app.post("/api/transfer/inspect")
+    def transfer_inspect(req: TransferRequest) -> dict:
+        from . import transfer
+
+        res = transfer.inspect_bundle(req.path)
+        if "error" in res:
+            raise HTTPException(400, res["error"])
+        return res
+
+    @app.post("/api/transfer/import")
+    def transfer_import(req: TransferRequest) -> dict:
+        from . import transfer
+
+        res = transfer.start_import(req.path, req.components)
+        if "error" in res:
+            raise HTTPException(400, res["error"])
+        return res
+
+    @app.get("/api/transfer/status")
+    def transfer_status() -> dict:
+        from . import transfer
+
+        return transfer.get_status()
 
     @app.delete("/api/ocr/surya")
     def surya_uninstall() -> dict:
