@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import threading
@@ -129,11 +130,42 @@ def get_status() -> dict:
     return s
 
 
+def _ssl_context(strict: bool = False) -> ssl.SSLContext:
+    """קונטקסט SSL שסומך על מאגר התעודות של Windows - כמו הדפדפן.
+
+    פייתון 3.13 מפעיל כברירת מחדל בדיקת X509 מחמירה (VERIFY_X509_STRICT)
+    שדוחה תעודות CA של מסנני אינטרנט כמו נטפרי (חסרה בהן הרחבת keyUsage),
+    למרות שהמערכת והדפדפן מקבלים אותן. מכבים את הבדיקה המחמירה בלבד -
+    אימות השרשרת הרגיל מול תעודות Windows נשאר בתוקף.
+    """
+    ctx = ssl.create_default_context()
+    if not strict and hasattr(ssl, "VERIFY_X509_STRICT"):
+        ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return ctx
+
+
+def _unverified_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _urlopen(url: str, timeout: int = 120):
+    """פתיחת URL עם אמון בתעודות Windows; ברשת מפוענחת שגם זה לא עוזר בה -
+    נפילה להורדה ללא אימות (עם אזהרה): ההגנה ממילא בידי המסנן המפענח."""
+    req = urllib.request.Request(url, headers={"User-Agent": "HebrewSearch"})
+    try:
+        return urllib.request.urlopen(req, timeout=timeout, context=_ssl_context())
+    except ssl.SSLCertVerificationError as exc:
+        log.warning("אימות תעודת SSL נכשל עבור %s (%s) - ממשיך ללא אימות", url, exc)
+        return urllib.request.urlopen(req, timeout=timeout, context=_unverified_context())
+
+
 def _download(url: str, target: Path, label: str, pct_from: int, pct_to: int) -> None:
     """הורדת קובץ עם דיווח התקדמות לפי Content-Length."""
     target.parent.mkdir(parents=True, exist_ok=True)
-    req = urllib.request.Request(url, headers={"User-Agent": "HebrewSearch"})
-    with urllib.request.urlopen(req, timeout=120) as resp:
+    with _urlopen(url) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0
         with target.open("wb") as f:
@@ -151,20 +183,46 @@ def _download(url: str, target: Path, label: str, pct_from: int, pct_to: int) ->
                     )
 
 
+# מקורות ההורדה של pip - ל-fallback של trusted-host ברשתות עם פענוח HTTPS
+_PIP_HOSTS = ["pypi.org", "files.pythonhosted.org", "download.pytorch.org"]
+
+
 def _run_pip(args: list, step_label: str) -> None:
-    """הרצת pip בסביבה המבודדת; הפלט נכתב ללוג ההתקנה."""
+    """הרצת pip בסביבה המבודדת; הפלט נכתב ללוג ההתקנה.
+
+    ברשת עם פענוח HTTPS (נטפרי) pip עלול להיכשל באימות תעודות כי הוא
+    משתמש במאגר certifi משלו; במקרה כזה מנסים שוב עם trusted-host
+    למקורות הרשמיים (ההגנה בפועל בידי המסנן המפענח).
+    """
     log_file = env_dir() / "install.log"
-    cmd = [str(python_exe()), "-m", "pip"] + args + ["--no-warn-script-location"]
-    log.info("מריץ: %s", " ".join(cmd))
-    with log_file.open("a", encoding="utf-8", errors="replace") as lf:
-        lf.write(f"\n===== {step_label}: {' '.join(cmd)}\n")
-        lf.flush()
-        proc = subprocess.run(
-            cmd, stdout=lf, stderr=subprocess.STDOUT,
-            creationflags=_CREATE_NO_WINDOW, timeout=3600,
-        )
-    if proc.returncode != 0:
-        raise RuntimeError(f"{step_label} נכשל (קוד {proc.returncode}) - ראו {log_file}")
+
+    def run(extra: list) -> int:
+        cmd = [str(python_exe()), "-m", "pip"] + args + extra + ["--no-warn-script-location"]
+        log.info("מריץ: %s", " ".join(cmd))
+        with log_file.open("a", encoding="utf-8", errors="replace") as lf:
+            lf.write(f"\n===== {step_label}: {' '.join(cmd)}\n")
+            lf.flush()
+            proc = subprocess.run(
+                cmd, stdout=lf, stderr=subprocess.STDOUT,
+                creationflags=_CREATE_NO_WINDOW, timeout=3600,
+            )
+        return proc.returncode
+
+    rc = run([])
+    if rc != 0:
+        tail = ""
+        try:
+            tail = log_file.read_text(encoding="utf-8", errors="replace")[-4000:]
+        except Exception:
+            pass
+        if "CERTIFICATE_VERIFY_FAILED" in tail or "SSLError" in tail:
+            log.warning("%s נכשל באימות SSL - מנסה שוב עם trusted-host", step_label)
+            trusted = []
+            for h in _PIP_HOSTS:
+                trusted += ["--trusted-host", h]
+            rc = run(trusted)
+    if rc != 0:
+        raise RuntimeError(f"{step_label} נכשל (קוד {rc}) - ראו {log_file}")
 
 
 def _install_python(tmp: Path) -> None:
@@ -216,8 +274,7 @@ def _pick_llama_assets(release: dict) -> list:
 
 def _install_llama(tmp: Path) -> None:
     _set(step="הורדת llama-server", percent=85)
-    req = urllib.request.Request(LLAMA_RELEASES_API, headers={"User-Agent": "HebrewSearch"})
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with _urlopen(LLAMA_RELEASES_API, timeout=60) as resp:
         release = json.loads(resp.read().decode("utf-8"))
     urls = _pick_llama_assets(release)
     ldir = llama_dir()

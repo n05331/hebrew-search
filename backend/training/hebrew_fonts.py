@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,10 @@ from typing import Dict, List
 from ..logging_setup import get_logger
 
 log = get_logger("training.fonts")
+
+# גופנים ישנים רבים מכילים טבלאות post/name מעט פגומות; fontTools מציף על כך
+# אזהרות שאינן משפיעות על קריאת ה-cmap (בדיקת הכיסוי העברי) - משתיקים
+logging.getLogger("fontTools").setLevel(logging.ERROR)
 
 # כל אותיות העברית כולל סופיות
 _HEBREW_LETTERS = [chr(c) for c in range(0x05D0, 0x05EB)]
