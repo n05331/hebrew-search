@@ -206,11 +206,20 @@ for _ in range(100):
     time.sleep(0.2)
 check("ייצוא מטקסט שמור", es2["error"] == "" and es2["done"], str(es2))
 
-# OCR בכפייה לקובץ בודד (התעלמות משכבת הטקסט)
-fo = call("POST", "/api/file/force-ocr", {"path": str(test_pdf)})
-check("force-ocr API", fo.get("queued") is True, str(fo))
-fi2 = call("GET", "/api/file/info?path=" + quote(str(test_pdf)))
-check("force-ocr נרשם", fi2.get("force_ocr") is True and fi2.get("status") == "pending_ocr", str(fi2))
+# OCR בכפייה לקובץ בודד (התעלמות משכבת הטקסט); ברצי CI אין Tesseract -
+# ואז הצפי הוא 503 מסודר
+ocr_ok = call("GET", "/api/stats").get("ocr_available")
+if ocr_ok:
+    fo = call("POST", "/api/file/force-ocr", {"path": str(test_pdf)})
+    check("force-ocr API", fo.get("queued") is True, str(fo))
+    fi2 = call("GET", "/api/file/info?path=" + quote(str(test_pdf)))
+    check("force-ocr נרשם", fi2.get("force_ocr") is True and fi2.get("status") == "pending_ocr", str(fi2))
+else:
+    try:
+        call("POST", "/api/file/force-ocr", {"path": str(test_pdf)})
+        check("force-ocr ללא OCR מחזיר 503", False)
+    except Exception as e:
+        check("force-ocr ללא OCR מחזיר 503", "503" in str(e), str(e))
 
 # אימון: בדיקת סביבה + רשימת גופנים עבריים
 tc = call("GET", "/api/training/check")
