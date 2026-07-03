@@ -70,6 +70,21 @@ class RegionOcrRequest(BaseModel):
     y: float
     w: float
     h: float
+    page: Optional[int] = None  # ל-PDF: מספר העמוד (1-based)
+
+
+class ForceOcrRequest(BaseModel):
+    path: str
+
+
+class ExportExtractRequest(BaseModel):
+    path: str
+    target: str = ""            # נתיב יעד; ריק = הורדת דפדפן
+    source: str = "saved"       # saved / text / ocr
+    engine: str = ""            # מזהה מנוע ל-OCR; ריק = לפי ההגדרות
+    format: str = "txt"         # txt / docx
+    page_from: int = 0          # 0 = מתחילת הקובץ
+    page_to: int = 0            # 0 = עד סוף הקובץ
 
 
 class TransferRequest(BaseModel):
@@ -137,7 +152,7 @@ class SaveTextFileRequest(BaseModel):
 
 def create_app() -> FastAPI:
     setup_logging()
-    app = FastAPI(title="חיפוש עברי", version="0.3.3")
+    app = FastAPI(title="חיפוש עברי", version="0.3.4")
 
     app.add_middleware(
         CORSMiddleware,
@@ -176,6 +191,19 @@ def create_app() -> FastAPI:
             if n:
                 log.info("גרסת חילוץ PDF השתנתה - %d קבצים יחולצו מחדש ברקע", n)
                 indexer.start_reindex_all()
+
+        # תיקון חד-פעמי: טקסטים שנשמרו בסדר חזותי (עברית הפוכה) מקבצים
+        # ישנים - מתוקנים בקטלוג ובאינדקס בלי חילוץ או OCR מחדש
+        if catalog.get_setting("bidi_fix_version") != "1":
+            indexer.fix_reversed_catalog_texts()
+
+        # ניקוי שרת llama יתום מריצה קודמת שנסגרה באמצע עמוד Surya
+        try:
+            from .extractors.ocr_engines import surya_engine
+
+            surya_engine.kill_orphan_server("שרת יתום מריצה קודמת")
+        except Exception as exc:
+            log.debug("בדיקת שרת llama יתום נכשלה: %s", exc)
 
         log.info("השרת מוכן. מסמכים באינדקס: %d", engine.num_docs())
         try:
@@ -501,9 +529,76 @@ def create_app() -> FastAPI:
             raise HTTPException(404, "הקובץ לא נמצא")
         if not ocr.available():
             raise HTTPException(503, "OCR אינו זמין")
-        text = ocr.ocr_image_region(p, req.x, req.y, req.w, req.h)
+        if p.suffix.lower() == ".pdf":
+            text = ocr.ocr_pdf_region(p, req.page or 1, req.x, req.y, req.w, req.h)
+        else:
+            text = ocr.ocr_image_region(p, req.x, req.y, req.w, req.h)
         log.info("OCR אזורי: %s -> %d תווים", p.name, len(text))
         return {"text": text}
+
+    # ---- מידע על קובץ בודד באינדקס ----
+    @app.get("/api/file/info")
+    def file_info(path: str) -> dict:
+        row = catalog.get_file_by_path(path)
+        if row is None:
+            return {"indexed": False}
+        return {
+            "indexed": row["status"] == "indexed",
+            "status": row["status"],
+            "source": row["source"],
+            "page_count": row["page_count"] or 0,
+            "has_text": bool(row["full_text"]),
+            "force_ocr": bool(row["force_ocr"]),
+        }
+
+    @app.post("/api/file/force-ocr")
+    def file_force_ocr(req: ForceOcrRequest) -> dict:
+        """סימון קובץ להתעלמות משכבת הטקסט שלו וסריקת OCR מלאה ברקע."""
+        if not _ocr_available():
+            raise HTTPException(503, "OCR אינו זמין")
+        row = catalog.get_file_by_path(req.path)
+        if row is None:
+            raise HTTPException(404, "הקובץ אינו באינדקס - הוסיפו את התיקייה שלו קודם")
+        catalog.set_force_ocr(row["id"])
+        indexer.ocr_status["pending"] = catalog.count_pending_ocr()
+        log.info("נדרש OCR מלא (התעלמות משכבת הטקסט): %s", req.path)
+        return {"queued": True}
+
+    # ---- ייצוא טקסט מקובץ (משימת רקע עם התקדמות) ----
+    @app.post("/api/export/extract")
+    def export_extract(req: ExportExtractRequest) -> dict:
+        from . import export_service
+
+        res = export_service.start_export(
+            path=req.path, target=req.target, source=req.source,
+            engine_id=req.engine, fmt=req.format,
+            page_from=req.page_from, page_to=req.page_to,
+        )
+        if "error" in res:
+            raise HTTPException(409, res["error"])
+        return res
+
+    @app.get("/api/export/extract/status")
+    def export_extract_status() -> dict:
+        from . import export_service
+
+        return export_service.get_status()
+
+    @app.post("/api/export/extract/cancel")
+    def export_extract_cancel() -> dict:
+        from . import export_service
+
+        export_service.cancel()
+        return {"ok": True}
+
+    @app.get("/api/export/extract/result")
+    def export_extract_result():
+        from . import export_service
+
+        st = export_service.get_status()
+        if not st.get("result_available"):
+            raise HTTPException(404, "אין תוצאת ייצוא זמינה")
+        return _text_download(export_service.get_result(), f"{st.get('name') or 'export'}.txt")
 
     # ---- מנועי OCR ----
     @app.get("/api/ocr/engines")
@@ -708,15 +803,10 @@ def create_app() -> FastAPI:
     # ---- שמירת טקסט לקובץ (TXT / WORD) בנתיב שנבחר בדיאלוג ----
     @app.post("/api/export/text-file")
     def export_text_file(req: SaveTextFileRequest) -> dict:
-        target = Path(req.path)
+        from . import export_service
+
         try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if req.format == "docx" or target.suffix.lower() == ".docx":
-                _write_docx(target, req.text)
-            else:
-                if not target.suffix:
-                    target = target.with_suffix(".txt")
-                target.write_text(req.text, encoding="utf-8-sig")
+            target = export_service.write_text_file(Path(req.path), req.text, req.format)
             log.info("טקסט נשמר לקובץ: %s", target)
             return {"ok": True, "path": str(target)}
         except Exception as exc:
@@ -899,26 +989,6 @@ def _copy_to_clipboard(text: str) -> bool:
         return True
     finally:
         user32.CloseClipboard()
-
-
-def _write_docx(target: Path, text: str) -> None:
-    """שמירת טקסט כקובץ Word (docx) עם כיווניות RTL."""
-    import docx
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from docx.oxml import OxmlElement
-
-    doc = docx.Document()
-    for line in text.splitlines() or [""]:
-        p = doc.add_paragraph(line)
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        try:
-            pPr = p._p.get_or_add_pPr()
-            pPr.append(OxmlElement("w:bidi"))
-        except Exception:
-            pass
-    if not target.suffix:
-        target = target.with_suffix(".docx")
-    doc.save(str(target))
 
 
 def _restart_watch_async() -> None:

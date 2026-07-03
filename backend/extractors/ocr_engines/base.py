@@ -8,8 +8,17 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
+
+from ... import hebrew_bidi
+from ...logging_setup import get_logger
+
+log = get_logger("extract.ocr.base")
+
+# מרווח מזערי (שניות) בין דיווחי התקדמות חלקית לשמירה
+_PARTIAL_INTERVAL = 45.0
 
 
 class OcrEngine:
@@ -61,10 +70,13 @@ class OcrEngine:
         existing_texts: Optional[Dict[int, str]] = None,
         min_chars: int = 15,
         progress_cb: Optional[Callable[[int, int], None]] = None,
+        partial_cb: Optional[Callable[[List[Tuple[int, str]], int], None]] = None,
     ) -> List[Tuple[int, str]]:
         """מרנדר ומריץ OCR על עמודי PDF. עמודים שכבר יש להם טקסט מדולגים.
 
         מחזיר רשימת (מספר_עמוד, טקסט). ``progress_cb(done, total)`` לדיווח.
+        ``partial_cb(pairs, total)`` נקרא תקופתית עם העמודים שהושלמו עד כה -
+        לשמירת התקדמות חלקית (כך סגירת התוכנה באמצע לא מאבדת את מה שזוהה).
         """
         import pypdfium2 as pdfium
 
@@ -86,17 +98,38 @@ class OcrEngine:
             if progress_cb:
                 progress_cb(done, n)
 
+            last_partial = time.time()
+            bidi_fixed = 0
             step = max(1, self.pdf_batch)
             for start in range(0, len(todo), step):
                 batch = todo[start : start + step]
                 images = [pdf[i].render(scale=scale).to_pil() for i in batch]  # רינדור סדרתי
                 texts = self.ocr_images(images)
                 for i, txt in zip(batch, texts):
-                    results[i] = txt
+                    # רשת ביטחון: מנוע שפלט סדר חזותי (הפוך) מתוקן מיד
+                    results[i], changed = hebrew_bidi.fix_visual_order(txt)
+                    if changed:
+                        bidi_fixed += 1
                 done += len(batch)
                 if progress_cb:
                     progress_cb(done, n)
+                if (
+                    partial_cb
+                    and done < n
+                    and time.time() - last_partial >= _PARTIAL_INTERVAL
+                ):
+                    last_partial = time.time()
+                    pairs = [(i + 1, results[i]) for i in sorted(results)]
+                    try:
+                        partial_cb(pairs, n)
+                    except Exception:
+                        pass
 
+            if bidi_fixed:
+                log.warning(
+                    "מנוע ה-OCR '%s' פלט טקסט בסדר חזותי (הפוך) - תוקן ב-%d עמודים של %s",
+                    self.id, bidi_fixed, path.name,
+                )
             return [(i + 1, results.get(i, "")) for i in range(n)]
         finally:
             pdf.close()

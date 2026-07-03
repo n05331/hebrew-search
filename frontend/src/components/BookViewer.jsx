@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { api, downloadText } from "../api.js";
+import { api } from "../api.js";
 import PdfViewer from "./PdfViewer.jsx";
 import ImageViewer from "./ImageViewer.jsx";
 import TextBookViewer from "./TextBookViewer.jsx";
 import TocPanel from "./TocPanel.jsx";
+import ExportDialog from "./ExportDialog.jsx";
 
 // מציג ספר: טקסט (גלילה רציפה + כותרות) / PDF (גלילה רציפה, מקורי) / תמונה,
 // עם חלונית צד של עץ כותרות + חיפוש-בספר, מעבר טקסט<->PDF לפי כותרות,
@@ -222,12 +223,19 @@ export default function BookViewer({
     }
   }
 
-  async function extractSmart() {
-    onToast && onToast("מחלץ טקסט… זה עשוי לקחת רגע", "ok");
+  const [exportOpen, setExportOpen] = useState(false);
+
+  // ---- OCR מלא בכפייה (כששכבת הטקסט של הקובץ פגומה) ----
+  async function forceOcr() {
+    if (!window.confirm(
+      "הפעולה תגרום לתוכנה להתעלם מהטקסט המוטמע בקובץ זה ולסרוק את כל " +
+      "עמודיו מחדש ב-OCR (במנוע האינדוקס הנבחר).\n" +
+      "מיועד לקבצים שהטקסט שלהם משובש (למשל הפוך). הסריקה תרוץ ברקע " +
+      "ועשויה לקחת זמן. להמשיך?"
+    )) return;
     try {
-      const r = await api.extractPdfSmart(book.pdf_path);
-      downloadText(r.text, `${book.name}.txt`);
-      onToast && onToast("הטקסט חולץ והורד כקובץ", "ok");
+      await api.forceOcr(book.pdf_path);
+      onToast && onToast("הקובץ נכנס לתור ה-OCR - ההתקדמות מוצגת בסרגל הצד", "ok");
     } catch (e) {
       onToast && onToast(e.message, "error");
     }
@@ -274,9 +282,14 @@ export default function BookViewer({
         )}
 
         {view === "pdf" && book.pdf_path && (
-          <button className="btn btn-sm" onClick={extractSmart} title="חילוץ טקסט חכם מה-PDF">
-            חלץ טקסט
-          </button>
+          <>
+            <button className="btn btn-sm" onClick={() => setExportOpen(true)} title="ייצוא הטקסט של הקובץ (טקסט שמור / שכבת טקסט / OCR)">
+              חלץ טקסט
+            </button>
+            <button className="btn btn-sm" onClick={forceOcr} title="הטקסט בקובץ משובש? התעלמות מהטקסט המוטמע וסריקת OCR מלאה ברקע">
+              סרוק OCR מלא
+            </button>
+          </>
         )}
 
         {book.mefarshim && (
@@ -333,6 +346,7 @@ export default function BookViewer({
               }}
               onTotalPages={setPdfTotal}
               onUserScroll={closeTocOnScroll}
+              onToast={onToast}
             />
           )}
 
@@ -341,6 +355,16 @@ export default function BookViewer({
           )}
         </div>
       </div>
+
+      {exportOpen && book.pdf_path && (
+        <ExportDialog
+          book={book}
+          currentPage={pdfPageRef.current || 1}
+          totalPages={pdfTotal}
+          onClose={() => setExportOpen(false)}
+          onToast={onToast}
+        />
+      )}
     </div>
   );
 }

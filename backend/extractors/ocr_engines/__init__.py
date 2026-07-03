@@ -50,6 +50,11 @@ def get_region_engine() -> OcrEngine:
     return get_engine(ocr_settings.get("ocr_region_engine") or "tesseract")
 
 
+def get_export_engine(engine_id: str = "") -> OcrEngine:
+    """המנוע לייצוא טקסט מלא מהצפיין (ניתן לעקיפה פר-ייצוא)."""
+    return get_engine(engine_id or ocr_settings.get("ocr_export_engine") or "tesseract")
+
+
 def describe_engines() -> List[dict]:
     """תיאור כל המנועים ל-UI: זהות, זמינות וסכימת הגדרות."""
     out = []

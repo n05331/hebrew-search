@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List
 
+from .. import hebrew_bidi
 from ..logging_setup import get_logger
 
 log = get_logger("extract.pdf_smart")
@@ -137,6 +138,11 @@ def extract_page_text(page) -> str:
     words = page.extract_words(use_text_flow=False) or []
     if not words:
         return ""
+
+    # שכבת טקסט בסדר חזותי (קבצים ישנים): תווי כל מילה הפוכים. סדר המילים
+    # נקבע ממילא לפי קואורדינטות (ימין-לשמאל), כך שדי בהיפוך תוכן המילים.
+    if hebrew_bidi.words_look_reversed(w["text"] for w in words):
+        words = [dict(w, text=hebrew_bidi.reverse_visual(w["text"])) for w in words]
 
     lines = _cluster_lines(words)
     cols = _detect_columns(lines, page.width or 600)

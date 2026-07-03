@@ -107,6 +107,10 @@ class Catalog:
             );
             """
         )
+        # מיגרציה: דגל פר-קובץ להתעלמות משכבת הטקסט (OCR מלא בכפייה)
+        cols = {r["name"] for r in cur.execute("PRAGMA table_info(files)").fetchall()}
+        if "force_ocr" not in cols:
+            cur.execute("ALTER TABLE files ADD COLUMN force_ocr INTEGER DEFAULT 0")
         self.conn.commit()
 
     # ---- ניהול תיקיות מנוטרות ----
@@ -151,6 +155,18 @@ class Catalog:
         with self._lock:
             self.conn.execute(
                 "UPDATE files SET status='pending_ocr', error=NULL WHERE id=?",
+                (file_id,),
+            )
+            self.conn.commit()
+
+    def set_force_ocr(self, file_id: int) -> None:
+        """מסמן קובץ להתעלמות משכבת הטקסט שלו: OCR מלא יריץ עליו ברקע.
+
+        הטקסט הקיים נשאר זמין לחיפוש עד שה-OCR מסתיים ומחליף אותו.
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE files SET force_ocr=1, status='pending_ocr', error=NULL WHERE id=?",
                 (file_id,),
             )
             self.conn.commit()
@@ -282,6 +298,10 @@ class Catalog:
         """
         img_exts = ",".join(f"'{e}'" for e in sorted(settings.image_extensions))
         with self._lock:
+            # התקדמות חלקית ממנוע קודם לא מנוצלת בהרצה-מחדש מפורשת
+            self.conn.execute(
+                "UPDATE files SET source=NULL WHERE source='ocr_partial'"
+            )
             cur = self.conn.execute(
                 "UPDATE files SET status='pending_ocr', error=NULL "
                 "WHERE (status='indexed' AND source IN ('ocr','mixed')) "
@@ -357,6 +377,70 @@ class Catalog:
                 (source, page_count, len(full_text), full_text, time.time(), file_id),
             )
             self.conn.commit()
+
+    def save_partial_ocr(
+        self,
+        file_id: int,
+        full_text: str,
+        segments: List[Segment],
+        page_count: int,
+    ) -> None:
+        """שמירת התקדמות OCR חלקית: התוכן נשמר אך הקובץ נשאר בתור.
+
+        ``source='ocr_partial'`` מסמן שהטקסט חלקי - בהמשך העמודים שכבר
+        זוהו ינוצלו כ-existing_texts במקום סריקה חוזרת.
+        """
+        with self._lock:
+            self.conn.execute("DELETE FROM segments WHERE file_id = ?", (file_id,))
+            self.conn.executemany(
+                "INSERT INTO segments (file_id, seq, page, char_start, char_end) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [
+                    (file_id, i, s.page, s.char_start, s.char_end)
+                    for i, s in enumerate(segments)
+                ],
+            )
+            self.conn.execute(
+                "UPDATE files SET source='ocr_partial', page_count=?, "
+                "char_count=?, full_text=? WHERE id=?",
+                (page_count, len(full_text), full_text, file_id),
+            )
+            self.conn.commit()
+
+    def get_partial_ocr_pages(self, file_id: int) -> Dict[int, str]:
+        """שליפת עמודי OCR שנשמרו חלקית (מריצה קודמת שנקטעה): עמוד -> טקסט."""
+        row = self.get_file(file_id)
+        if row is None or row["source"] != "ocr_partial" or not row["full_text"]:
+            return {}
+        text = row["full_text"]
+        pages: Dict[int, str] = {}
+        for seg in self.get_segments(file_id):
+            if seg["page"] is None:
+                continue
+            t = text[seg["char_start"]:seg["char_end"]]
+            if t.strip():
+                pages[seg["page"]] = t
+        return pages
+
+    def update_full_text(self, file_id: int, full_text: str) -> None:
+        """עדכון הטקסט המלא בלבד (למשל תיקון סדר חזותי) - בלי לגעת במקטעים.
+
+        בטוח רק כשאורך הטקסט אינו משתנה (המקטעים מצביעים להיסטים בתוכו).
+        """
+        with self._lock:
+            self.conn.execute(
+                "UPDATE files SET full_text=?, char_count=? WHERE id=?",
+                (full_text, len(full_text), file_id),
+            )
+            self.conn.commit()
+
+    def iter_pdf_texts(self) -> List[sqlite3.Row]:
+        """קובצי PDF עם תוכן שמור - לסריקת תיקון סדר חזותי חד-פעמית."""
+        return self.conn.execute(
+            "SELECT id, path, name, ext, mtime, status, full_text FROM files "
+            "WHERE ext='.pdf' AND full_text IS NOT NULL "
+            "AND status IN ('indexed', 'cache')"
+        ).fetchall()
 
     def mark_error(self, file_id: int, error: str) -> None:
         with self._lock:

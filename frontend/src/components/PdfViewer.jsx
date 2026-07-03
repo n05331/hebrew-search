@@ -10,18 +10,21 @@ import React, {
 import * as pdfjsLib from "pdfjs-dist";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { api } from "../api.js";
+import OcrResultPanel from "./OcrResultPanel.jsx";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
 
 // מציג PDF מקורי (canvas) בגלילה רציפה עם רינדור עצל: רק העמודים הנראים
 // (± חוצץ) מרונדרים, השאר placeholders בגובה משוער - כך גם ספר של 1000
 // עמודים נגלל בחלקות. קיים גם מצב "עמוד בודד/כפול" (הדפדוף הקודם).
+// זום: כפתורים או Ctrl+גלגלת (ממוקד לסמן); גרירה עם העכבר מזיזה את המסמך;
+// "חלץ טקסט מאזור" מאפשר לגרור מלבן על עמוד ולקבל OCR של הקטע.
 //
 // ref API: scrollToPage(n)
 
 const GAP = 12; // רווח בין עמודים בגלילה
 
-function PageSlot({ pdf, pageNum, width, height, shouldRender, scale }) {
+function PageSlot({ pdf, pageNum, width, height, shouldRender, scale, selection }) {
   const canvasRef = useRef(null);
   const taskRef = useRef(null);
   const [done, setDone] = useState(false);
@@ -66,12 +69,18 @@ function PageSlot({ pdf, pageNum, width, height, shouldRender, scale }) {
         <div className="pdf-page-placeholder">{pageNum}</div>
       )}
       {shouldRender && !done && <div className="pdf-page-loading">טוען עמוד {pageNum}…</div>}
+      {selection && (
+        <div
+          className="select-rect"
+          style={{ left: selection.x, top: selection.y, width: selection.w, height: selection.h }}
+        />
+      )}
     </div>
   );
 }
 
 const PdfViewer = forwardRef(function PdfViewer(
-  { path, initialPage = 1, onPageChange, onTotalPages, onUserScroll },
+  { path, initialPage = 1, onPageChange, onTotalPages, onUserScroll, onToast },
   ref
 ) {
   const wrapRef = useRef(null);
@@ -86,6 +95,15 @@ const PdfViewer = forwardRef(function PdfViewer(
   const [loading, setLoading] = useState(true);
   const pendingScrollRef = useRef(initialPage > 1 ? initialPage : null);
   const curPageRef = useRef(initialPage);
+  const zoomAnchorRef = useRef(null); // {cx, cy, ratio} לשמירת נקודת העוגן בזום
+  const panRef = useRef(null);        // {x, y, sl, st} בזמן גרירת המסמך
+
+  // בחירת אזור ל-OCR
+  const [regionMode, setRegionMode] = useState(false);
+  const [selection, setSelection] = useState(null); // {page, x, y, w, h}
+  const [regionBusy, setRegionBusy] = useState(false);
+  const [ocrText, setOcrText] = useState(null);
+  const selStartRef = useRef(null); // {page, x, y}
 
   // טעינת המסמך
   useEffect(() => {
@@ -140,6 +158,46 @@ const PdfViewer = forwardRef(function PdfViewer(
   const scale = baseSize ? pageW / baseSize.w : 1.3;
   const pageH = baseSize ? Math.round(baseSize.h * scale) : 800;
 
+  // שינוי זום עם שמירת נקודת העוגן (ברירת מחדל: מרכז התצוגה)
+  const applyZoom = useCallback((factor, cx = null, cy = null) => {
+    const el = wrapRef.current;
+    setZoom((z) => {
+      const nz = Math.min(3, Math.max(0.4, +(z * factor).toFixed(3)));
+      if (nz !== z && el) {
+        zoomAnchorRef.current = {
+          cx: cx != null ? cx : el.clientWidth / 2,
+          cy: cy != null ? cy : el.clientHeight / 2,
+          ratio: nz / z,
+        };
+      }
+      return nz;
+    });
+  }, []);
+
+  // אחרי שהמידות התעדכנו - מתקנים את הגלילה כך שנקודת העוגן תישאר במקום
+  useLayoutEffect(() => {
+    const a = zoomAnchorRef.current;
+    const el = wrapRef.current;
+    if (!a || !el) return;
+    zoomAnchorRef.current = null;
+    el.scrollTop = (el.scrollTop + a.cy) * a.ratio - a.cy;
+    el.scrollLeft = (el.scrollLeft + a.cx) * a.ratio - a.cx;
+  }, [zoom]);
+
+  // Ctrl+גלגלת לזום - מאזין לא-פסיבי כדי לחסום את הגלילה הרגילה
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    function onWheel(e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const bounds = el.getBoundingClientRect();
+      applyZoom(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - bounds.left, e.clientY - bounds.top);
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
   const scrollToPage = useCallback(
     (n) => {
       const el = wrapRef.current;
@@ -181,6 +239,85 @@ const PdfViewer = forwardRef(function PdfViewer(
     if (total) onPageChange && onPageChange(curPageRef.current, total);
   }, [total]);
 
+  // ---- בחירת אזור ל-OCR וגרירת המסמך ----
+  function findSlot(e) {
+    const slot = e.target.closest && e.target.closest(".pdf-page-slot");
+    if (!slot) return null;
+    const bounds = slot.getBoundingClientRect();
+    return {
+      page: parseInt(slot.dataset.page, 10),
+      x: Math.min(Math.max(0, e.clientX - bounds.left), bounds.width),
+      y: Math.min(Math.max(0, e.clientY - bounds.top), bounds.height),
+      bw: bounds.width,
+      bh: bounds.height,
+    };
+  }
+
+  function onMouseDown(e) {
+    if (regionMode) {
+      const p = findSlot(e);
+      if (!p) return;
+      e.preventDefault();
+      selStartRef.current = p;
+      setSelection({ page: p.page, x: p.x, y: p.y, w: 0, h: 0 });
+      return;
+    }
+    // גרירת המסמך (pan)
+    if (e.button !== 0) return;
+    const el = wrapRef.current;
+    panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+  }
+
+  function onMouseMove(e) {
+    if (regionMode) {
+      const start = selStartRef.current;
+      if (!start) return;
+      const slot = wrapRef.current.querySelector(`.pdf-page-slot[data-page="${start.page}"]`);
+      if (!slot) return;
+      const bounds = slot.getBoundingClientRect();
+      const x = Math.min(Math.max(0, e.clientX - bounds.left), bounds.width);
+      const y = Math.min(Math.max(0, e.clientY - bounds.top), bounds.height);
+      setSelection({
+        page: start.page,
+        x: Math.min(start.x, x),
+        y: Math.min(start.y, y),
+        w: Math.abs(x - start.x),
+        h: Math.abs(y - start.y),
+      });
+      return;
+    }
+    if (panRef.current) {
+      const el = wrapRef.current;
+      el.scrollLeft = panRef.current.sl - (e.clientX - panRef.current.x);
+      el.scrollTop = panRef.current.st - (e.clientY - panRef.current.y);
+    }
+  }
+
+  async function onMouseUp() {
+    if (!regionMode) {
+      panRef.current = null;
+      return;
+    }
+    const start = selStartRef.current;
+    const sel = selection;
+    selStartRef.current = null;
+    if (!start || !sel || sel.w < 8 || sel.h < 8) return;
+
+    setRegionBusy(true);
+    try {
+      const r = await api.ocrRegion(
+        path, sel.x / pageW, sel.y / pageH, sel.w / pageW, sel.h / pageH, sel.page
+      );
+      setOcrText(r.text || "(לא זוהה טקסט באזור שנבחר)");
+      setRegionMode(false);
+      setSelection(null);
+    } catch (e2) {
+      onToast && onToast("חילוץ הטקסט נכשל: " + e2.message, "error");
+    } finally {
+      setRegionBusy(false);
+    }
+  }
+
   const BUFFER = twoUp ? 4 : 2;
   const slots = [];
   for (let i = 1; i <= total; i++) {
@@ -193,6 +330,7 @@ const PdfViewer = forwardRef(function PdfViewer(
         height={pageH}
         scale={scale}
         shouldRender={Math.abs(i - curPage) <= BUFFER}
+        selection={regionMode && selection && selection.page === i ? selection : null}
       />
     );
   }
@@ -212,6 +350,8 @@ const PdfViewer = forwardRef(function PdfViewer(
   } else {
     pages = slots;
   }
+
+  const baseName = (path.split(/[\\/]/).pop() || "pdf").replace(/\.[^.]+$/, "");
 
   return (
     <div className="pdf-viewer">
@@ -236,9 +376,18 @@ const PdfViewer = forwardRef(function PdfViewer(
         <button className="btn btn-sm" onClick={() => scrollToPage(curPage + 1)} title="הבא">›</button>
         <button className="btn btn-sm" onClick={() => scrollToPage(total)} title="עמוד אחרון">⏭</button>
         <span className="toolbar-sep" />
-        <button className="btn btn-sm" onClick={() => setZoom((z) => Math.min(3, +(z + 0.15).toFixed(2)))}>+</button>
-        <button className="btn btn-sm" onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.15).toFixed(2)))}>−</button>
+        <button className="btn btn-sm" onClick={() => applyZoom(1.15)} title="הגדלה (או Ctrl+גלגלת)">+</button>
+        <button className="btn btn-sm" onClick={() => applyZoom(1 / 1.15)} title="הקטנה (או Ctrl+גלגלת)">−</button>
         <span className="muted pdf-zoom-label">{Math.round(zoom * 100)}%</span>
+        <span className="toolbar-sep" />
+        <button
+          className={"btn btn-sm" + (regionMode ? " btn-primary" : "")}
+          onClick={() => { setRegionMode((v) => !v); setSelection(null); }}
+          title="גררו מלבן על עמוד לזיהוי הטקסט שבו (OCR)"
+        >
+          {regionMode ? "גררו מלבן על העמוד…" : "חלץ טקסט מאזור"}
+        </button>
+        {regionBusy && <span className="muted">מזהה טקסט…</span>}
         <span className="toolbar-sep" />
         <button
           className={"btn btn-sm" + (twoUp ? " btn-primary" : "")}
@@ -248,11 +397,29 @@ const PdfViewer = forwardRef(function PdfViewer(
           {twoUp ? "עמוד אחד" : "שני עמודים"}
         </button>
       </div>
-      <div className="pdf-scroll-wrap" ref={wrapRef} onScroll={onScroll}>
+      <div
+        className={"pdf-scroll-wrap" + (regionMode ? " selecting" : " pannable")}
+        ref={wrapRef}
+        onScroll={onScroll}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={() => { panRef.current = null; }}
+      >
         {loading && <div className="loading">טוען PDF…</div>}
         {error && <div className="error-box">{error}</div>}
         {pdf && <div className="pdf-pages-scroll">{pages}</div>}
       </div>
+      {ocrText != null && (
+        <div className="pdf-ocr-float">
+          <OcrResultPanel
+            text={ocrText}
+            baseName={baseName}
+            onClose={() => setOcrText(null)}
+            onToast={onToast}
+          />
+        </div>
+      )}
     </div>
   );
 });

@@ -302,6 +302,21 @@ body {
   display: flex;
   flex-direction: column;
   height: 100%;
+  position: relative;
+}
+.pdf-ocr-float {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  width: min(46%, 520px);
+  max-height: 65%;
+  display: flex;
+  z-index: 20;
+  box-shadow: var(--shadow);
+}
+.pdf-ocr-float .ocr-result {
+  width: 100%;
+  max-height: 100%;
 }
 .pdf-toolbar {
   display: flex;
@@ -372,6 +387,17 @@ body {
 }
 .image-wrap.selecting img {
   pointer-events: none;
+}
+.image-wrap.pannable {
+  cursor: grab;
+}
+.image-wrap.pannable:active {
+  cursor: grabbing;
+}
+.image-canvas {
+  position: relative;
+  width: fit-content;
+  margin: 0 auto;
 }
 .select-rect {
   position: absolute;
@@ -1152,6 +1178,23 @@ mark.hl.active {
   overflow: hidden;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
+.modal.export-dialog {
+  width: min(620px, 92vw);
+  height: auto;
+  max-height: 85vh;
+}
+.export-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.export-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 8px 0;
+}
 .modal-header {
   display: flex;
   align-items: center;
@@ -1388,14 +1431,28 @@ mark.hl.active {
 /* ===== PDF בגלילה רציפה ===== */
 .pdf-scroll-wrap {
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
   background: #e8ebf2;
   padding: 14px;
+}
+.pdf-scroll-wrap.pannable {
+  cursor: grab;
+}
+.pdf-scroll-wrap.pannable:active {
+  cursor: grabbing;
+}
+.pdf-scroll-wrap.selecting {
+  cursor: crosshair;
+  user-select: none;
 }
 .pdf-pages-scroll {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* בזום גבוה העמוד רחב מהמיכל - שומר על גלילה אופקית תקינה לשני הצדדים */
+  width: max-content;
+  min-width: 100%;
+  margin: 0 auto;
 }
 .pdf-page-slot {
   position: relative;

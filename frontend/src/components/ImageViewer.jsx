@@ -1,36 +1,42 @@
-import React, { useRef, useState } from "react";
-import { api, copyText, downloadText, pickSaveFile } from "../api.js";
+import React, { useEffect, useRef, useState } from "react";
+import { api } from "../api.js";
+import OcrResultPanel from "./OcrResultPanel.jsx";
 
 // מציג תמונה עם חילוץ טקסט אזורי: לוחצים "חלץ טקסט", גוררים מלבן על
 // התמונה (כמו כלי החיתוך של Windows), והטקסט מוצג בחלונית.
+// זום: Ctrl+גלגלת; גרירה עם העכבר מזיזה את התמונה כשהיא מוגדלת.
 export default function ImageViewer({ path, onToast }) {
+  const wrapRef = useRef(null);
   const imgRef = useRef(null);
+  const baseWRef = useRef(null); // רוחב התמונה בזום 1 (נמדד פעם אחת)
+  const panRef = useRef(null);   // {x, y, sl, st} בזמן גרירה
+  const [zoom, setZoom] = useState(1);
   const [selectMode, setSelectMode] = useState(false);
   const [rect, setRect] = useState(null); // {x,y,w,h} בפיקסלים של התצוגה
   const [dragStart, setDragStart] = useState(null);
   const [ocrText, setOcrText] = useState(null);
   const [busy, setBusy] = useState(false);
-  const [saveMenu, setSaveMenu] = useState(false);
 
-  async function saveAs(format) {
-    setSaveMenu(false);
-    const baseName = (path.split(/[\\/]/).pop() || "ocr").replace(/\.[^.]+$/, "");
-    const defaultName = baseName + (format === "docx" ? ".docx" : ".txt");
-    try {
-      // דיאלוג "שמירה בשם" נייטיב (בגרסת השולחן); בנפילה - הורדה רגילה
-      const target = await pickSaveFile(defaultName, format);
-      if (target) {
-        await api.saveTextFile(target, ocrText, format);
-        onToast && onToast("הקובץ נשמר: " + target, "ok");
-      } else if (format === "txt") {
-        downloadText(ocrText, defaultName);
-      } else {
-        onToast && onToast("לא נבחר מיקום שמירה", "error");
+  useEffect(() => {
+    setZoom(1);
+    baseWRef.current = null;
+  }, [path]);
+
+  // זום ב-Ctrl+גלגלת - מאזין לא-פסיבי כדי לחסום את גלילת הדף
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    function onWheel(e) {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (baseWRef.current == null && imgRef.current) {
+        baseWRef.current = imgRef.current.clientWidth;
       }
-    } catch (e) {
-      onToast && onToast("השמירה נכשלה: " + e.message, "error");
+      setZoom((z) => Math.min(6, Math.max(0.3, +(z * (e.deltaY < 0 ? 1.12 : 1 / 1.12)).toFixed(3))));
     }
-  }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   function relPos(e) {
     const bounds = imgRef.current.getBoundingClientRect();
@@ -43,7 +49,14 @@ export default function ImageViewer({ path, onToast }) {
   }
 
   function onMouseDown(e) {
-    if (!selectMode) return;
+    if (!selectMode) {
+      // גרירת התמונה (pan) - הזזת הגלילה של המיכל
+      if (e.button !== 0) return;
+      const el = wrapRef.current;
+      panRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
     const p = relPos(e);
     setDragStart(p);
@@ -51,7 +64,15 @@ export default function ImageViewer({ path, onToast }) {
   }
 
   function onMouseMove(e) {
-    if (!selectMode || !dragStart) return;
+    if (!selectMode) {
+      if (panRef.current) {
+        const el = wrapRef.current;
+        el.scrollLeft = panRef.current.sl - (e.clientX - panRef.current.x);
+        el.scrollTop = panRef.current.st - (e.clientY - panRef.current.y);
+      }
+      return;
+    }
+    if (!dragStart) return;
     const p = relPos(e);
     setRect({
       x: Math.min(dragStart.x, p.x),
@@ -62,7 +83,11 @@ export default function ImageViewer({ path, onToast }) {
   }
 
   async function onMouseUp(e) {
-    if (!selectMode || !dragStart || !rect) return;
+    if (!selectMode) {
+      panRef.current = null;
+      return;
+    }
+    if (!dragStart || !rect) return;
     const { bw, bh } = relPos(e);
     setDragStart(null);
     if (rect.w < 8 || rect.h < 8) return; // בחירה קטנה מדי
@@ -91,6 +116,9 @@ export default function ImageViewer({ path, onToast }) {
     }
   }
 
+  const baseName = (path.split(/[\\/]/).pop() || "ocr").replace(/\.[^.]+$/, "");
+  const zoomed = zoom !== 1 && baseWRef.current != null;
+
   return (
     <div className="image-viewer">
       <div className="image-toolbar">
@@ -104,55 +132,48 @@ export default function ImageViewer({ path, onToast }) {
           חלץ טקסט מכל התמונה
         </button>
         {busy && <span className="muted">מזהה טקסט…</span>}
+        {zoomed && (
+          <>
+            <span className="muted">{Math.round(zoom * 100)}%</span>
+            <button className="btn btn-sm" onClick={() => setZoom(1)}>איפוס זום</button>
+          </>
+        )}
+        <span className="muted" style={{ fontSize: "0.85em" }}>Ctrl+גלגלת לזום, גרירה להזזה</span>
       </div>
 
       <div className="image-stage">
         <div
-          className={"image-wrap" + (selectMode ? " selecting" : "")}
+          ref={wrapRef}
+          className={"image-wrap" + (selectMode ? " selecting" : " pannable")}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
+          onMouseLeave={() => { panRef.current = null; }}
         >
-          <img ref={imgRef} src={api.fileUrl(path)} alt="" draggable={false} />
-          {rect && selectMode && (
-            <div
-              className="select-rect"
-              style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+          <div className="image-canvas">
+            <img
+              ref={imgRef}
+              src={api.fileUrl(path)}
+              alt=""
+              draggable={false}
+              style={zoomed ? { width: Math.round(baseWRef.current * zoom), maxWidth: "none" } : undefined}
             />
-          )}
+            {rect && selectMode && (
+              <div
+                className="select-rect"
+                style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+              />
+            )}
+          </div>
         </div>
 
         {ocrText != null && (
-          <div className="ocr-result">
-            <div className="ocr-result-head">
-              <b>טקסט מחולץ</b>
-              <div className="ocr-actions">
-                <button
-                  className="btn btn-sm"
-                  onClick={async () => {
-                    const ok = await copyText(ocrText);
-                    onToast && onToast(ok ? "הועתק ללוח" : "ההעתקה נכשלה", ok ? "ok" : "error");
-                  }}
-                >
-                  העתק
-                </button>
-                <button
-                  className={"btn btn-sm" + (saveMenu ? " btn-primary" : "")}
-                  onClick={() => setSaveMenu((v) => !v)}
-                >
-                  שמור ▾
-                </button>
-                <button className="btn btn-sm" onClick={() => { setOcrText(null); setSaveMenu(false); }}>סגור</button>
-                {saveMenu && (
-                  <div className="save-menu">
-                    <button className="btn btn-sm" onClick={() => saveAs("txt")}>שמור כקובץ TXT</button>
-                    <button className="btn btn-sm" onClick={() => saveAs("docx")}>שמור כקובץ WORD</button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <pre className="doc-text ocr-text">{ocrText}</pre>
-          </div>
+          <OcrResultPanel
+            text={ocrText}
+            baseName={baseName}
+            onClose={() => setOcrText(null)}
+            onToast={onToast}
+          />
         )}
       </div>
     </div>

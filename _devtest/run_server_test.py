@@ -27,6 +27,11 @@ book_txt.write_text(
 (r / "1_רבינו הקדוש" / "ליקוטי מוהר''ן@מפרשים" / "ביאור.txt").write_text(
     "@ תורה א\nביאור נפלא.\n", encoding="utf-8"
 )
+# PDF סינתטי עם שכבת טקסט - לבדיקות ייצוא ו-OCR בכפייה (נבנה גם ב-CI)
+sys.path.insert(0, str(Path(__file__).parent))
+from make_pdf_test import build_twocol_pdf  # noqa: E402
+
+test_pdf = build_twocol_pdf(r / "1_רבינו הקדוש" / "ליקוטי מוהר''ן@" / "twocol.pdf")
 
 import uvicorn  # noqa: E402
 from backend.server import app  # noqa: E402
@@ -171,6 +176,41 @@ for _ in range(100):
         break
     time.sleep(0.2)
 check("ייבוא הושלם", ts["error"] == "" and ts["percent"] == 100, str(ts))
+
+# מידע על קובץ + ייצוא טקסט כמשימת רקע
+fi = call("GET", "/api/file/info?path=" + quote(str(test_pdf)))
+check("file info API", fi.get("has_text") is True and fi.get("page_count", 0) >= 1, str(fi))
+
+exp_txt = DATA / "export_extract.txt"
+call("POST", "/api/export/extract", {
+    "path": str(test_pdf), "target": str(exp_txt), "source": "text", "format": "txt",
+})
+for _ in range(100):
+    es = call("GET", "/api/export/extract/status")
+    if not es["running"]:
+        break
+    time.sleep(0.2)
+check("ייצוא טקסט הושלם", es["error"] == "" and es["done"], str(es))
+check("קובץ הייצוא נוצר", exp_txt.exists() and exp_txt.stat().st_size > 10)
+
+# ייצוא מהטקסט השמור (הקובץ אונדקס קודם) - עמוד ראשון בלבד
+exp_saved = DATA / "export_saved.txt"
+call("POST", "/api/export/extract", {
+    "path": str(test_pdf), "target": str(exp_saved), "source": "saved",
+    "format": "txt", "page_from": 1, "page_to": 1,
+})
+for _ in range(100):
+    es2 = call("GET", "/api/export/extract/status")
+    if not es2["running"]:
+        break
+    time.sleep(0.2)
+check("ייצוא מטקסט שמור", es2["error"] == "" and es2["done"], str(es2))
+
+# OCR בכפייה לקובץ בודד (התעלמות משכבת הטקסט)
+fo = call("POST", "/api/file/force-ocr", {"path": str(test_pdf)})
+check("force-ocr API", fo.get("queued") is True, str(fo))
+fi2 = call("GET", "/api/file/info?path=" + quote(str(test_pdf)))
+check("force-ocr נרשם", fi2.get("force_ocr") is True and fi2.get("status") == "pending_ocr", str(fi2))
 
 # אימון: בדיקת סביבה + רשימת גופנים עבריים
 tc = call("GET", "/api/training/check")

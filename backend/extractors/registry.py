@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from ..config import settings
 from ..logging_setup import get_logger
@@ -21,17 +21,26 @@ def extract_file(
     path: Path,
     allow_ocr: bool = True,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    force_ocr: bool = False,
+    existing_ocr: Optional[Dict[int, str]] = None,
+    partial_cb: Optional[Callable[[List[Tuple[int, str]], int], None]] = None,
 ) -> ExtractResult:
     """מחלץ טקסט מקובץ לפי סיומת. מעולם לא זורק - מחזיר תוצאה ריקה במקרה כשל.
 
     ``allow_ocr=False`` מחלץ טקסט בלבד (שלב מהיר); OCR ירוץ מאוחר יותר ברקע.
+    ``force_ocr`` (ל-PDF): התעלמות משכבת הטקסט המוטמעת וסריקת כל העמודים.
+    ``existing_ocr`` (ל-PDF): עמודים שכבר עברו OCR בריצה קודמת שנקטעה.
+    ``partial_cb`` (ל-PDF): דיווח תקופתי לשמירת התקדמות OCR חלקית.
     """
     ext = path.suffix.lower()
     try:
         if ext in settings.docx_extensions:
             return docx_extractor.extract(path)
         if ext in settings.pdf_extensions:
-            return pdf_extractor.extract(path, allow_ocr=allow_ocr, progress_cb=progress_cb)
+            return pdf_extractor.extract(
+                path, allow_ocr=allow_ocr, progress_cb=progress_cb,
+                force_ocr=force_ocr, existing_ocr=existing_ocr, partial_cb=partial_cb,
+            )
         if ext in settings.image_extensions:
             return image_extractor.extract(path, allow_ocr=allow_ocr, progress_cb=progress_cb)
         if ext in settings.text_extensions:

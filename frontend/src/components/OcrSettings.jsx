@@ -171,6 +171,39 @@ export default function OcrSettings({ local, edit, onToast }) {
         </div>
       )}
 
+      {engines.length > 1 && (
+        <div className="setting-row">
+          <label title="המנוע שישמש כברירת מחדל בחלון 'חלץ טקסט' בצפיין">מנוע לייצוא טקסט (חלץ טקסט)</label>
+          <select
+            value={local.ocr_export_engine || "tesseract"}
+            onChange={(e) => edit({ ocr_export_engine: e.target.value })}
+          >
+            {engines.filter((e) => e.available).map((e) => (
+              <option key={e.id} value={e.id}>{e.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="setting-row">
+        <label title="לקבצים ששכבת הטקסט המוטמעת שלהם פגומה">הרץ OCR תמיד (התעלם מטקסט מוטמע)</label>
+        <label className="chk">
+          <input
+            type="checkbox"
+            checked={String(local.ocr_ignore_text_layer || "0") === "1"}
+            onChange={(e) => {
+              if (e.target.checked && !window.confirm(
+                "אזהרה: במצב זה כל עמוד בכל PDF ייסרק ב-OCR גם כשיש בו טקסט מוטמע תקין.\n" +
+                "האינדוקס יהיה איטי משמעותית (OCR לכל עמוד במקום חילוץ מיידי).\n\n" +
+                "מיועד למקרים שבהם שכבת הטקסט של הקבצים פגומה. להפעיל?"
+              )) return;
+              edit({ ocr_ignore_text_layer: e.target.checked ? "1" : "0" });
+            }}
+          />
+          <span className="muted">אזהרה: מאט מאוד את האינדוקס — כל עמוד נסרק גם כשיש בו טקסט</span>
+        </label>
+      </div>
+
       {engine && !engine.available && (
         <div className="muted">{engine.label}: {engine.status}</div>
       )}

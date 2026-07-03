@@ -33,6 +33,50 @@ log = get_logger("extract.ocr.surya")
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 
+# קובץ הסימון (sentinel) ש-Surya כותב עם ה-pid של llama-server שהופעל.
+# בסגירה נקייה ה-atexit של ה-worker סוגר את השרת ומוחק את הקובץ; כשה-worker
+# נהרג בכוח (סגירת התוכנה באמצע עמוד) השרת (כ-2GB זיכרון) נשאר יתום.
+_SERVER_SENTINEL = Path.home() / ".cache" / "datalab" / "surya" / "llamacpp_server.json"
+
+
+def _is_llama_process(pid: int) -> bool:
+    """אימות שהתהליך אכן llama-server - הגנה מהריגת pid ממוחזר."""
+    try:
+        if sys.platform == "win32":
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True, creationflags=_CREATE_NO_WINDOW, timeout=10,
+            ).stdout.decode("mbcs", errors="replace")
+            return "llama-server" in out.lower()
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def kill_orphan_server(reason: str = "") -> None:
+    """סגירת llama-server יתום לפי קובץ הסימון של Surya.
+
+    נקרא בעליית התוכנה (שרת שנשאר מריצה קודמת) ואחרי הריגת ה-worker בכוח.
+    """
+    try:
+        if not _SERVER_SENTINEL.exists():
+            return
+        data = json.loads(_SERVER_SENTINEL.read_text(encoding="utf-8"))
+        pid = data.get("pid")
+        if pid and _is_llama_process(int(pid)):
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True, creationflags=_CREATE_NO_WINDOW, timeout=15,
+                )
+            else:
+                os.kill(int(pid), 9)
+            log.info("llama-server יתום (pid %s) נסגר: %s", pid, reason or "ניקוי")
+        _SERVER_SENTINEL.unlink(missing_ok=True)
+    except Exception as exc:
+        log.debug("ניקוי llama-server יתום נכשל: %s", exc)
+
 # זמן המתנה לעליית ה-worker: בהרצה ראשונה מורדים המודלים (ג'יגה-בייטים)
 _READY_TIMEOUT = 3600
 # זמן מרבי לעמוד בודד (על CPU חלש עיבוד עמוד יכול לקחת דקות ארוכות)
@@ -288,9 +332,16 @@ class SuryaEngine(OcrEngine):
                     proc.wait(timeout=15)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
             log.info("Surya worker כובה")
         except Exception as exc:
             log.debug("כיבוי Surya worker: %s", exc)
+        # ה-worker אולי לא הספיק לסגור את llama-server (במיוחד אחרי kill) -
+        # מוודאים שהשרת (כ-2GB זיכרון) לא נשאר יתום
+        kill_orphan_server("כיבוי ה-worker")
 
     # ---- זיהוי ----
     def ocr_image(self, image) -> str:

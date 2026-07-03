@@ -77,8 +77,22 @@ export const api = {
   fileUrl: (path) => BASE + "/file?" + new URLSearchParams({ path }),
   extractPdfSmart: (path) =>
     req("/extract/pdf-smart", { method: "POST", body: JSON.stringify({ path }) }),
-  ocrRegion: (path, x, y, w, h) =>
-    req("/ocr/region", { method: "POST", body: JSON.stringify({ path, x, y, w, h }) }),
+  ocrRegion: (path, x, y, w, h, page) =>
+    req("/ocr/region", { method: "POST", body: JSON.stringify({ path, x, y, w, h, page }) }),
+  fileInfo: (path) => req("/file/info?" + new URLSearchParams({ path })),
+  forceOcr: (path) => req("/file/force-ocr", { method: "POST", body: JSON.stringify({ path }) }),
+
+  // ---- ייצוא טקסט מקובץ (משימת רקע עם התקדמות) ----
+  exportExtractStart: (body) =>
+    req("/export/extract", { method: "POST", body: JSON.stringify(body) }),
+  exportExtractStatus: () => req("/export/extract/status"),
+  exportExtractCancel: () => req("/export/extract/cancel", { method: "POST" }),
+  exportExtractResult: async (filename) => {
+    const res = await fetch(BASE + "/export/extract/result");
+    if (!res.ok) throw new Error("התוצאה אינה זמינה");
+    const blob = await res.blob();
+    triggerDownload(blob, filename || "export.txt");
+  },
   ocrEngines: () => req("/ocr/engines"),
   ocrRerun: () => req("/ocr/rerun", { method: "POST" }),
   suryaStatus: () => req("/ocr/surya/status"),

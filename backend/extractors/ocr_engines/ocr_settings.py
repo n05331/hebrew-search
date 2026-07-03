@@ -20,6 +20,8 @@ _ENV_OVERRIDES = {
 DEFAULTS: Dict[str, str] = {
     "ocr_engine": "tesseract",         # המנוע לאינדוקס רקע
     "ocr_region_engine": "tesseract",  # המנוע ל-OCR אזורי אינטראקטיבי
+    "ocr_export_engine": "tesseract",  # המנוע לייצוא טקסט (חילוץ מלא מהצפיין)
+    "ocr_ignore_text_layer": "0",      # OCR תמיד, גם כשיש שכבת טקסט (איטי!)
     "ocr_languages": "heb+eng",
     "ocr_psm": "3",
     "ocr_dpi": "300",

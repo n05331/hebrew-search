@@ -23,6 +23,7 @@ _devtest/ui_lib/
 _devtest/twocol.pdf
 
 # ---- Internal / private (not part of the open-source project) ----
+/אבקשה/
 /הערות לתוכנה.txt
 /PLAN.md
 /FrankRuehl Bold.ttf

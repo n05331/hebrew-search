@@ -18,6 +18,7 @@ from typing import List, Optional
 
 from .catalog import Catalog, Segment, catalog
 from .config import settings
+from .extractors import Page as ExtractPage
 from .extractors import extract_file, is_supported
 from .logging_setup import get_logger
 from .search_engine import SearchEngine, engine
@@ -249,11 +250,15 @@ class Indexer:
             path=str(path), name=path.name, ext=path.suffix.lower(),
             size=size, mtime=stat.st_mtime, sha1=sha1,
         )
+        row = self.catalog.get_file(file_id)
+        force_ocr = bool(row["force_ocr"]) if row is not None else False
 
-        if twin is not None and self._copy_from_twin(file_id, path, stat.st_mtime, twin):
+        if not force_ocr and twin is not None and self._copy_from_twin(
+            file_id, path, stat.st_mtime, twin
+        ):
             return "indexed"
 
-        result = extract_file(path, allow_ocr=allow_ocr)
+        result = extract_file(path, allow_ocr=allow_ocr, force_ocr=force_ocr)
         full_text, segments = _build_full_text(result.pages)
         has_text = bool(full_text.strip())
 
@@ -349,6 +354,7 @@ class Indexer:
     def _process_ocr(self, row) -> None:
         file_id = row["id"]
         path = Path(row["path"])
+        force_ocr = bool(row["force_ocr"]) if "force_ocr" in row.keys() else False
         self.ocr_status["current"] = str(path)
         self.ocr_status["page"] = 0
         self.ocr_status["pages"] = 0
@@ -357,25 +363,53 @@ class Indexer:
             self.catalog.mark_error(file_id, "הקובץ לא נמצא בעת OCR")
             return
 
-        # אם בינתיים הושלם OCR לקובץ זהה-תוכן - משתמשים בו במקום להריץ שוב
-        try:
-            twin = self.catalog.find_indexed_by_sha1(row["sha1"] or "", exclude_id=file_id)
-        except Exception:
-            twin = None
-        if twin is not None and self._copy_from_twin(file_id, path, row["mtime"] or 0, twin):
-            self.engine.commit()
-            return
+        # אם בינתיים הושלם OCR לקובץ זהה-תוכן - משתמשים בו במקום להריץ שוב.
+        # במצב "התעלם מהטקסט" לא מעתיקים מתאום: המשתמש ביקש סריקה אמיתית.
+        if not force_ocr:
+            try:
+                twin = self.catalog.find_indexed_by_sha1(row["sha1"] or "", exclude_id=file_id)
+            except Exception:
+                twin = None
+            if twin is not None and self._copy_from_twin(file_id, path, row["mtime"] or 0, twin):
+                self.engine.commit()
+                return
 
         def cb(done: int, total: int) -> None:
             self.ocr_status["page"] = done
             self.ocr_status["pages"] = total
+
+        # התקדמות חלקית מריצה קודמת שנקטעה - עמודים שזוהו לא נסרקים שוב
+        existing_ocr = {}
+        try:
+            existing_ocr = self.catalog.get_partial_ocr_pages(file_id)
+            if existing_ocr:
+                log.info(
+                    "המשך OCR מנקודת עצירה: %s (%d עמודים כבר זוהו)",
+                    path.name, len(existing_ocr),
+                )
+        except Exception:
+            pass
+
+        def save_partial(pairs, total) -> None:
+            """שמירת העמודים שהושלמו עד כה - סגירה באמצע לא מאבדת אותם."""
+            try:
+                pages = [ExtractPage(number=num, text=txt) for num, txt in pairs]
+                p_text, p_segs = _build_full_text(pages)
+                self.catalog.save_partial_ocr(
+                    file_id, full_text=p_text, segments=p_segs, page_count=total
+                )
+            except Exception as exc:
+                log.debug("שמירת התקדמות OCR חלקית נכשלה: %s", exc)
 
         # עד 3 ניסיונות: קובץ עשוי להיות נעול זמנית (למשל בזמן העתקה לתיקייה)
         result = None
         full_text, segments = "", []
         for attempt in range(3):
             try:
-                result = extract_file(path, allow_ocr=True, progress_cb=cb)
+                result = extract_file(
+                    path, allow_ocr=True, progress_cb=cb, force_ocr=force_ocr,
+                    existing_ocr=existing_ocr, partial_cb=save_partial,
+                )
             except Exception as exc:
                 log.warning("OCR נכשל עבור %s (ניסיון %d): %s", path, attempt + 1, exc)
                 result = None
@@ -403,6 +437,68 @@ class Indexer:
         )
         self.engine.commit()
         log.info("OCR הושלם ואונדקס: %s", path)
+
+    def fix_reversed_catalog_texts(self, done_key: str = "bidi_fix_version", version: str = "1") -> None:
+        """סריקה חד-פעמית של הקטלוג: תיקון טקסטים שנשמרו בסדר חזותי (הפוך).
+
+        קובצי PDF ישנים עם שכבת טקסט חזותית נשמרו הפוכים באינדקסים ישנים -
+        התיקון נעשה במקום (per-עמוד, משמר אורך ולכן גם את מיקומי המקטעים),
+        בלי חילוץ או OCR מחדש, וגם כשקובץ המקור כבר אינו זמין. רץ ברקע.
+        """
+        from . import hebrew_bidi
+
+        def run():
+            try:
+                rows = self.catalog.iter_pdf_texts()
+                fixed_files = 0
+                for row in rows:
+                    text = row["full_text"] or ""
+                    segs = self.catalog.get_segments(row["id"])
+                    if not text or not segs:
+                        continue
+                    parts: List[str] = []
+                    last = 0
+                    fixed_pages = 0
+                    for seg in segs:
+                        s, e = seg["char_start"], seg["char_end"]
+                        parts.append(text[last:s])
+                        page_text = text[s:e]
+                        # רוב הטקסט הישן נבנה ב-pdf_smart: סדר המילים נקבע נכון
+                        # לפי קואורדינטות ורק תוכן המילים הפוך ("words"); עמודים
+                        # מנתיב הנפילה (extract_text) הפוכים כולל סדר ("lines")
+                        mode = "lines" if hebrew_bidi.line_order_reversed(page_text) else "words"
+                        fixed, changed = hebrew_bidi.fix_visual_order(page_text, mode=mode)
+                        # שמירת האורך חיונית לתקפות היסטי המקטעים
+                        if changed and len(fixed) == len(page_text):
+                            parts.append(fixed)
+                            fixed_pages += 1
+                        else:
+                            parts.append(page_text)
+                        last = e
+                    parts.append(text[last:])
+                    if not fixed_pages:
+                        continue
+                    new_text = "".join(parts)
+                    self.catalog.update_full_text(row["id"], new_text)
+                    if row["status"] == "indexed":
+                        self.engine.add_document(
+                            file_id=row["id"], path=row["path"], name=row["name"],
+                            ext=row["ext"] or "", mtime=int(row["mtime"] or 0),
+                            content=new_text,
+                        )
+                    fixed_files += 1
+                    log.info(
+                        "תוקן טקסט הפוך (סדר חזותי) בקטלוג: %s (%d עמודים)",
+                        row["name"], fixed_pages,
+                    )
+                if fixed_files:
+                    self.engine.commit()
+                    log.info("תיקון סדר חזותי בקטלוג הושלם: %d קבצים תוקנו", fixed_files)
+                self.catalog.set_setting(done_key, version)
+            except Exception as exc:
+                log.exception("תיקון סדר חזותי בקטלוג נכשל: %s", exc)
+
+        threading.Thread(target=run, daemon=True).start()
 
     def rebuild_index_from_catalog(self) -> None:
         """בונה את אינדקס Tantivy מחדש מהתוכן השמור בקטלוג (ללא חילוץ/OCR מחדש).
