@@ -28,6 +28,7 @@ DEFAULTS: Dict[str, str] = {
     "ocr_contrast": "1",
     "ocr_binarize": "1",
     "ocr_traineddata": "",             # ריק = מודל heb המובנה; אחרת שם מודל מותאם
+    "ocr_surya_gpu": "0",              # האצת Vulkan על GPU משולב (ניסיוני)
 }
 
 _cache: Optional[Dict[str, str]] = None

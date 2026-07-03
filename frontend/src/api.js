@@ -84,6 +84,7 @@ export const api = {
   suryaStatus: () => req("/ocr/surya/status"),
   suryaInstall: () => req("/ocr/surya/install", { method: "POST" }),
   suryaUninstall: () => req("/ocr/surya", { method: "DELETE" }),
+  suryaVulkanInstall: () => req("/ocr/surya/vulkan", { method: "POST" }),
 
   // ---- ייצוא/ייבוא נתונים (העברה בין מחשבים / אופליין) ----
   transferComponents: () => req("/transfer/components"),

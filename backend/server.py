@@ -137,7 +137,7 @@ class SaveTextFileRequest(BaseModel):
 
 def create_app() -> FastAPI:
     setup_logging()
-    app = FastAPI(title="חיפוש עברי", version="0.3.2")
+    app = FastAPI(title="חיפוש עברי", version="0.3.3")
 
     app.add_middleware(
         CORSMiddleware,
@@ -534,6 +534,18 @@ def create_app() -> FastAPI:
         started = surya_install.start_install()
         if not started:
             raise HTTPException(409, "התקנה כבר רצה")
+        return {"started": True}
+
+    @app.post("/api/ocr/surya/vulkan")
+    def surya_vulkan_install() -> dict:
+        """הורדת בניית Vulkan - להאצה ניסיונית על GPU משולב."""
+        from .extractors.ocr_engines import surya_install
+
+        if surya_install.has_vulkan_build():
+            return {"started": False, "installed": True}
+        started = surya_install.start_install_vulkan()
+        if not started:
+            raise HTTPException(409, "פעולה אחרת כבר רצה")
         return {"started": True}
 
     # ---- ייצוא/ייבוא נתוני התוכנה (העברה בין מחשבים / אופליין) ----

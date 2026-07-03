@@ -51,6 +51,31 @@ export default function OcrSettings({ local, edit, onToast }) {
     }
   }
 
+  async function toggleSuryaGpu(enable) {
+    if (!enable) {
+      edit({ ocr_surya_gpu: "0" });
+      return;
+    }
+    if (!window.confirm(
+      "האצה ב-GPU משולב (Vulkan) — ניסיוני:\n\n" +
+      "• עשוי להאיץ את הזיהוי במחשבים ללא כרטיס NVIDIA, בעיקר את עיבוד התמונה.\n" +
+      "• במחשבים מסוימים המנוע קורס במצב זה — במקרה כזה התוכנה תזהה את הכשל,\n" +
+      "  תחזור אוטומטית למצב מעבד (CPU) ותכבה את ההגדרה.\n" +
+      "• בהפעלה ראשונה תורד תוספת של כ-100MB.\n\nלהפעיל?"
+    )) return;
+    try {
+      const r = await api.suryaVulkanInstall();
+      if (r.started) {
+        setSurya((s) => ({ ...(s || {}), running: true, step: "הורדת רכיב Vulkan", percent: 0, error: "" }));
+        pollSurya();
+      }
+      edit({ ocr_surya_gpu: "1" });
+      onToast("הופעל מצב GPU משולב — זכרו לשמור הגדרות", "ok");
+    } catch (e) {
+      onToast(e.message, "error");
+    }
+  }
+
   async function uninstallSurya() {
     if (!window.confirm("להסיר את מנוע Surya מהמחשב? (ניתן להתקין שוב בכל עת)")) return;
     try {
@@ -159,6 +184,16 @@ export default function OcrSettings({ local, edit, onToast }) {
             {surya.installed && !surya.running && (
               <>
                 <span>מותקן ✓ {surya.nvidia ? "(כרטיס NVIDIA זוהה)" : "(ללא NVIDIA - הזיהוי איטי: מספר דקות לעמוד)"}</span>
+                {!surya.nvidia && (
+                  <label className="chk" title="ניסיוני - עם חזרה אוטומטית ל-CPU בכשל">
+                    <input
+                      type="checkbox"
+                      checked={String(local.ocr_surya_gpu || "0") === "1"}
+                      onChange={(e) => toggleSuryaGpu(e.target.checked)}
+                    />
+                    {" "}האצה ב-GPU משולב (Vulkan) — ניסיוני
+                  </label>
+                )}
                 <button className="btn" onClick={uninstallSurya}>הסר את המנוע</button>
               </>
             )}

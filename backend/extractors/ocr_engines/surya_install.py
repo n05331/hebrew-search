@@ -64,6 +64,15 @@ def llama_dir() -> Path:
     return env_dir() / "llama"
 
 
+def vulkan_dir() -> Path:
+    """בניית llama.cpp עם Vulkan - להאצה ניסיונית על GPU משולב."""
+    return env_dir() / "llama-vulkan"
+
+
+def has_vulkan_build() -> bool:
+    return (vulkan_dir() / "llama-server.exe").exists()
+
+
 def hf_cache_dir() -> Path:
     return env_dir() / "hf-cache"
 
@@ -127,6 +136,7 @@ def get_status() -> dict:
         s = dict(status)
     s["installed"] = is_installed()
     s["nvidia"] = has_nvidia()
+    s["vulkan"] = has_vulkan_build()
     return s
 
 
@@ -272,6 +282,20 @@ def _pick_llama_assets(release: dict) -> list:
     raise RuntimeError("לא נמצא בינארי llama-server מתאים ל-Windows בגרסה האחרונה")
 
 
+def _flatten_llama_dir(ldir: Path) -> None:
+    """חלק מהחבילות נפרשות לתת-תיקייה - מאתרים את llama-server.exe ומשטחים."""
+    exe = ldir / "llama-server.exe"
+    if not exe.exists():
+        found = list(ldir.rglob("llama-server.exe"))
+        if not found:
+            raise RuntimeError("llama-server.exe לא נמצא בחבילה שהורדה")
+        src_dir = found[0].parent
+        for item in src_dir.iterdir():
+            target = ldir / item.name
+            if not target.exists():
+                shutil.move(str(item), str(target))
+
+
 def _install_llama(tmp: Path) -> None:
     _set(step="הורדת llama-server", percent=85)
     with _urlopen(LLAMA_RELEASES_API, timeout=60) as resp:
@@ -284,17 +308,51 @@ def _install_llama(tmp: Path) -> None:
         _download(url, zpath, "llama.cpp", 85 + i * 5, 90 + i * 5)
         with zipfile.ZipFile(zpath) as z:
             z.extractall(ldir)
-    # חלק מהחבילות נפרשות לתת-תיקייה - מאתרים את llama-server.exe ומשטחים
-    exe = ldir / "llama-server.exe"
-    if not exe.exists():
-        found = list(ldir.rglob("llama-server.exe"))
-        if not found:
-            raise RuntimeError("llama-server.exe לא נמצא בחבילה שהורדה")
-        src_dir = found[0].parent
-        for item in src_dir.iterdir():
-            target = ldir / item.name
-            if not target.exists():
-                shutil.move(str(item), str(target))
+    _flatten_llama_dir(ldir)
+
+
+def _run_install_vulkan() -> None:
+    """הורדת בניית Vulkan של llama.cpp - להאצה ניסיונית על GPU משולב."""
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp(prefix="hs_vulkan_"))
+    try:
+        _set(step="הורדת llama.cpp Vulkan", detail="", percent=5, error="")
+        with _urlopen(LLAMA_RELEASES_API, timeout=60) as resp:
+            release = json.loads(resp.read().decode("utf-8"))
+        names = {a["name"]: a["browser_download_url"] for a in release.get("assets", [])}
+        vk = [n for n in names if "win" in n and "vulkan" in n and "x64" in n and n.endswith(".zip")]
+        if not vk:
+            raise RuntimeError("לא נמצאה בניית Vulkan ל-Windows בגרסה האחרונה")
+        zpath = tmp / "llama_vulkan.zip"
+        _download(names[sorted(vk)[-1]], zpath, "Vulkan", 5, 90)
+        vdir = vulkan_dir()
+        vdir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zpath) as z:
+            z.extractall(vdir)
+        _flatten_llama_dir(vdir)
+        _set(step="הושלם", detail="", percent=100)
+        log.info("בניית Vulkan הותקנה: %s", vdir)
+    except Exception as exc:
+        log.exception("התקנת בניית Vulkan נכשלה: %s", exc)
+        _set(step="שגיאה", error=str(exc))
+    finally:
+        with _lock:
+            status["running"] = False
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def start_install_vulkan() -> bool:
+    """מוריד את בניית ה-Vulkan ברקע. מחזיר False אם פעולה כבר רצה."""
+    global _thread
+    with _lock:
+        if status["running"]:
+            return False
+        status["running"] = True
+        status["error"] = ""
+    _thread = threading.Thread(target=_run_install_vulkan, daemon=True)
+    _thread.start()
+    return True
 
 
 def _install_models(tmp: Path) -> None:
